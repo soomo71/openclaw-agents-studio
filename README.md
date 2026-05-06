@@ -1,81 +1,81 @@
 # OpenClaw Agents Studio
 
-一个面向 OpenClaw 的本地会话工作台：查看会话、继续发送消息、打开 TUI、整理接力摘要，并用“黑洞协作”把多个 agent 的独立会话聚合到同一个任务面板里。
+[中文说明](README.zh-CN.md)
 
-这个项目来自一个真实的个人工作流，开源版会尽量保持“复制到任意 Mac 文件夹后双击可用”，同时避免把本机二进制、访问码、日志和个人状态文件放进仓库。
+OpenClaw Agents Studio is a local-first web workspace for OpenClaw sessions. It lets you inspect session history, continue channel-originated conversations, open matching TUI sessions, write Obsidian handoff notes, and coordinate multiple OpenClaw agents through a compact "blackhole collaboration" panel.
 
-## 功能
+The project is extracted from a real personal workflow and cleaned for open-source use. It is designed to be copied to any folder on macOS and launched with a double-click command file.
 
-- OpenClaw 会话列表：优先显示常用频道会话，支持实时更新和最近消息摘要。
-- 会话详情：查看历史、发送消息、打开对应 TUI、生成 Obsidian 接力摘要。
-- 移动端访问：可通过 Cloudflare Quick Tunnel 临时开放给手机浏览器访问，并使用 6 位访问码保护。
-- 黑洞协作：为多个 agent 创建独立 session，聚合展示任务进度和回复。
-- 像素工作室：用轻量状态层展示 agent 是否被调用、运行中、完成、跳过或发呆。
-- 归档机制：默认归档会话和黑洞任务，永久删除需要二次确认。
+## Features
 
-## 运行环境
+- Session list with live updates, latest-message previews, and channel-aware labels.
+- Session detail view with message sending, TUI launch, search, handoff notes, and archiving.
+- Optional mobile access through Cloudflare Quick Tunnel protected by a generated 6 digit access code.
+- Blackhole collaboration mode: run several OpenClaw agents in separate sessions and aggregate their progress in one task view.
+- Pixel studio status layer for agent activity without replacing the functional text cards.
+- Archive-first cleanup flow for sessions and blackhole tasks.
+
+## Requirements
 
 - macOS
 - Python 3
-- 已安装并配置好的 OpenClaw CLI
-- 推荐可在终端执行：
+- OpenClaw CLI installed and configured
+
+You should be able to run:
 
 ```bash
 openclaw --version
 openclaw status
 ```
 
-移动端远程访问还需要 `cloudflared`。双击启动脚本时如果缺少它，会自动下载到项目内的 `.tools/` 目录；该目录不会被提交到 Git。
+Mobile remote access uses `cloudflared`. If it is missing, the launcher downloads it into the local `.tools/` directory. That directory is intentionally ignored by Git.
 
-## 快速开始
+## Quick Start
 
-双击：
+Double-click:
+
+```text
+Start OpenClaw Agents Studio.command
+```
+
+This starts:
+
+- Local web UI: `http://127.0.0.1:8766`
+- Optional Cloudflare Quick Tunnel for mobile access
+
+Chinese launchers are also kept for convenience:
 
 ```text
 启动 OpenClaw 会话工具.command
+启动 手机远程访问.command
+停止 手机远程访问.command
+查看 手机远程访问.command
 ```
 
-它会同时启动：
-
-- 本机 Web 工具：`http://127.0.0.1:8766`
-- 手机远程访问隧道：终端会显示远程域名和 6 位访问码
-
-只想本机运行，也可以直接：
+To run only the local server:
 
 ```bash
 python3 openclaw_session_viewer.py
 ```
 
-然后打开：
+Then open:
 
 ```text
 http://127.0.0.1:8766
 ```
 
-停止手机远程访问：
+## Configuration
 
-```text
-停止 手机远程访问.command
-```
+Defaults work for a single local user. Override them with environment variables when needed:
 
-查看当前远程访问地址和访问码：
-
-```text
-查看 手机远程访问.command
-```
-
-## 配置
-
-默认配置适合单机使用。需要换目录、换端口或迁移用户时，可以通过环境变量覆盖：
-
-| 环境变量 | 默认值 | 说明 |
+| Variable | Default | Purpose |
 |---|---|---|
-| `OPENCLAW_HOME` | `~/.openclaw` | OpenClaw 数据目录 |
-| `OPENCLAW_SESSION_VIEWER_HOST` | `127.0.0.1` | 本机服务监听地址 |
-| `OPENCLAW_SESSION_VIEWER_PORT` | `8766` | 本机服务端口 |
-| `OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR` | `~/Documents/Obsidian Vault/OpenClaw` | 接力摘要和黑洞协作文件目录 |
+| `OPENCLAW_HOME` | `~/.openclaw` | OpenClaw data directory |
+| `OPENCLAW_SESSION_VIEWER_HOST` | `127.0.0.1` | Local server bind host |
+| `OPENCLAW_SESSION_VIEWER_PORT` | `8766` | Local server port |
+| `OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR` | `~/Documents/Obsidian Vault/OpenClaw` | Handoff and blackhole workspace directory |
 
-示例：
+Example:
 
 ```bash
 export OPENCLAW_SESSION_VIEWER_PORT=8777
@@ -83,58 +83,61 @@ export OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR="$HOME/Documents/MyVault/OpenClaw"
 python3 openclaw_session_viewer.py
 ```
 
-## 黑洞协作
+## Blackhole Collaboration
 
-默认角色顺序：
+Default display order:
 
 1. CEO
-2. 守护者
-3. 研究员
-4. 小助理
-5. 档案师
+2. Guardian
+3. Researcher
+4. Assistant
+5. Archivist
 
-底层 agent ID 不应随显示名称变化而变化。显示名称只是 UI 品牌层，真实路由仍依赖 OpenClaw agent 配置。
+Display names are UI labels only. Keep stable OpenClaw agent IDs underneath so routing, sessions, and histories remain predictable.
 
-如果涉及 OpenAI 模型，建议优先使用订阅认证方式；如订阅模型不可用，应配置 DeepSeek 等备用模型，避免所有 agent 同时瘫痪。
+If your agents use OpenAI models, prefer the subscription-based authentication flow when available. Configure a fallback model such as DeepSeek so a temporary OpenAI model/auth issue does not stop every agent.
 
-## 安全提醒
+## Safety
 
-- 本工具会读取本机 OpenClaw session、Obsidian 目录和附件缓存。
-- 不要把访问码、日志、`.openclaw`、`.tools`、`.env` 提交到 Git。
-- Cloudflare Quick Tunnel 适合临时手机访问，不保证长期稳定。
-- 如果要长期公网使用，建议改为带账号的 Cloudflare Tunnel、反向代理或内网穿透，并加上更严格的认证。
+- This tool reads local OpenClaw sessions, optional Obsidian notes, and local attachment cache files.
+- Do not commit `.openclaw`, `.tools`, logs, access codes, API keys, or private notes.
+- Cloudflare Quick Tunnel is suitable for temporary mobile access, not a hardened production deployment.
+- For long-running public access, add stronger authentication and use a named tunnel, reverse proxy, or trusted private network.
 
-## 项目结构
+## Project Layout
 
 ```text
 .
 ├── openclaw_session_viewer.py
-├── 启动 OpenClaw 会话工具.command
-├── 启动 手机远程访问.command
-├── 停止 手机远程访问.command
-├── 查看 手机远程访问.command
-├── DESIGN.md
+├── Start OpenClaw Agents Studio.command
+├── Start Mobile Remote Access.command
+├── Stop Mobile Remote Access.command
+├── Show Mobile Remote Access.command
 ├── README.md
+├── README.zh-CN.md
+├── DESIGN.md
 ├── LICENSE
 ├── SECURITY.md
+├── AUTHORS.md
+├── CONTRIBUTING.md
 └── docs/
     └── OPEN_SOURCE_CHECKLIST.md
 ```
 
-## 开发
+## Development
 
-语法检查：
+Syntax check:
 
 ```bash
 python3 -m py_compile openclaw_session_viewer.py
 ```
 
-隐私检查建议：
+Privacy scan before publishing:
 
 ```bash
-rg -n "password|token|OPENCLAW_GATEWAY_TOKEN|trycloudflare|/Users/你的用户名" .
+rg -n "password|passwd|token|secret|OPENCLAW_GATEWAY_TOKEN|trycloudflare|/Users/[^/]+|wxid_|@im.wechat|accountId|chat_id" .
 ```
 
-## 许可证
+## License
 
-MIT License。详见 `LICENSE`。
+MIT License. See [LICENSE](LICENSE).

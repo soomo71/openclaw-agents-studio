@@ -28,11 +28,14 @@ rg -n "password|passwd|token|secret|OPENCLAW_GATEWAY_TOKEN|trycloudflare|/Users/
 
 ## Documentation
 
-- [ ] README explains requirements.
+- [ ] English README explains requirements.
+- [ ] Chinese README is kept in `README.zh-CN.md`.
 - [ ] README lists environment variables.
 - [ ] SECURITY.md warns about remote exposure.
 - [ ] LICENSE is included.
 - [ ] DESIGN.md matches the current UI direction.
+- [ ] AUTHORS.md does not expose private identity unless intentionally published.
+- [ ] English and Chinese launchers are both present.
 
 ## Release
 

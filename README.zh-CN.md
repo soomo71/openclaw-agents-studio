@@ -12,6 +12,7 @@
 - 黑洞协作：为多个 agent 创建独立 session，聚合展示任务进度和回复。
 - 像素工作室：用轻量状态层展示 agent 是否被调用、运行中、完成、跳过或发呆。
 - 归档机制：默认归档会话和黑洞任务，永久删除需要二次确认。
+- 升级护航：升级 OpenClaw 前做状态检查，并创建本机私有备份用于对照或回滚。
 
 ## 运行环境
 
@@ -105,6 +106,14 @@ python3 openclaw_session_viewer.py
 
 详细说明见：[docs/SETUP_DOCTOR.md](docs/SETUP_DOCTOR.md)
 
+## 升级护航
+
+升级 OpenClaw 前，打开 `工具 -> 升级护航`。
+
+升级护航会只读检查当前 OpenClaw CLI、Gateway、插件、频道风险、模型兜底风险和最近日志信号。点击“创建升级前备份”会把关键 OpenClaw 文件复制到 `~/.openclaw/session-viewer-state/upgrade-backups/`，便于升级后人工对照或回滚。备份可能包含认证资料和会话索引，不要提交到 Git，也不要公开分享。
+
+详细说明见：[docs/UPGRADE_GUARD.md](docs/UPGRADE_GUARD.md)
+
 ## 安全提醒
 
 - 本工具会读取本机 OpenClaw session、Obsidian 目录和附件缓存。
@@ -127,7 +136,8 @@ python3 openclaw_session_viewer.py
 ├── SECURITY.md
 └── docs/
     ├── OPEN_SOURCE_CHECKLIST.md
-    └── SETUP_DOCTOR.md
+    ├── SETUP_DOCTOR.md
+    └── UPGRADE_GUARD.md
 ```
 
 ## 开发

@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.1"
+STUDIO_VERSION = "0.1.2"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -26,6 +26,7 @@ OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw"))
 AGENTS_DIR = OPENCLAW_HOME / "agents"
 STUDIO_STATE_DIR = OPENCLAW_HOME / "session-viewer-state"
 SETUP_STATE_FILE = STUDIO_STATE_DIR / "setup.json"
+UPGRADE_BACKUP_DIR = STUDIO_STATE_DIR / "upgrade-backups"
 REMOTE_STATE_DIR = OPENCLAW_HOME / "session-viewer-remote"
 REMOTE_TOKEN_FILE = REMOTE_STATE_DIR / "access-token.txt"
 AUTH_COOKIE_NAME = "openclaw_session_viewer_token"
@@ -390,6 +391,289 @@ def setup_doctor_fix():
     })
     write_json(SETUP_STATE_FILE, state)
     return {"ok": True, "created": created, "stateFile": str(SETUP_STATE_FILE), "report": setup_doctor_report()}
+
+
+def scrub_private(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(word in lowered for word in ["secret", "token", "key", "password", "appid", "app_id", "botid", "bot_id"]):
+                cleaned[key] = "***"
+            else:
+                cleaned[key] = scrub_private(item)
+        return cleaned
+    if isinstance(value, list):
+        return [scrub_private(item) for item in value]
+    return value
+
+
+def openclaw_config():
+    path = OPENCLAW_HOME / "openclaw.json"
+    data = read_json(path)
+    return data if isinstance(data, dict) else {}
+
+
+def configured_plugins(config):
+    entries = ((config.get("plugins") or {}).get("entries") or {})
+    if not isinstance(entries, dict):
+        return []
+    rows = []
+    for plugin_id, plugin_config in sorted(entries.items()):
+        plugin_config = plugin_config if isinstance(plugin_config, dict) else {}
+        rows.append({
+            "id": plugin_id,
+            "enabled": plugin_config.get("enabled") is not False,
+            "source": "openclaw.json",
+        })
+    return rows
+
+
+def package_version(path):
+    data = read_json(path) or {}
+    return data.get("version") or ""
+
+
+def node_resolve_from(directory, package_name):
+    if not directory.exists() or not shutil.which("node"):
+        return {"ok": False, "detail": "node unavailable or directory missing"}
+    raw = run([
+        "node",
+        "-e",
+        f"try{{console.log(require.resolve('{package_name}'))}}catch(e){{console.log(e.code + ': ' + e.message)}}",
+    ], timeout=8)
+    ok = bool(raw.strip()) and not raw.strip().startswith(("MODULE_NOT_FOUND", "ERR_"))
+    return {"ok": ok, "detail": raw.strip()}
+
+
+def extension_plugin_report():
+    rows = []
+    extensions_dir = OPENCLAW_HOME / "extensions"
+    if extensions_dir.exists():
+        for manifest in sorted(extensions_dir.glob("*/openclaw.plugin.json")):
+            plugin_dir = manifest.parent
+            package_json = plugin_dir / "package.json"
+            manifest_data = read_json(manifest) or {}
+            rows.append({
+                "id": manifest_data.get("id") or plugin_dir.name,
+                "path": str(plugin_dir),
+                "version": package_version(package_json),
+                "channels": manifest_data.get("channels") or [],
+                "hasChannelConfigs": bool(manifest_data.get("channelConfigs")),
+                "source": "extensions",
+            })
+    weixin_package = OPENCLAW_HOME / "npm" / "node_modules" / "@tencent-weixin" / "openclaw-weixin" / "package.json"
+    if weixin_package.exists():
+        rows.append({
+            "id": "@tencent-weixin/openclaw-weixin",
+            "path": str(weixin_package.parent),
+            "version": package_version(weixin_package),
+            "channels": ["openclaw-weixin"],
+            "hasChannelConfigs": True,
+            "source": "npm",
+        })
+    return rows
+
+
+def tail_text(path, max_bytes=1024 * 1024):
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(size - max_bytes, 0))
+            return handle.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def recent_openclaw_log_matches():
+    candidates = []
+    for folder in (Path("/tmp/openclaw"), OPENCLAW_HOME / "logs"):
+        if folder.exists():
+            candidates.extend(sorted(folder.glob("*.log"), key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)[:6])
+    patterns = [
+        ("wecomPluginLoadFailed", re.compile(r"wecom-openclaw-plugin failed to load.*Cannot find package 'openclaw'", re.I)),
+        ("weixinRuntimeTimeout", re.compile(r"Weixin runtime initialization timeout", re.I)),
+        ("pluginAllowEmpty", re.compile(r"plugins\.allow is empty", re.I)),
+    ]
+    counts = {key: 0 for key, _ in patterns}
+    examples = {key: "" for key, _ in patterns}
+    for path in candidates:
+        text = tail_text(path)
+        for line in text.splitlines():
+            for key, pattern in patterns:
+                if pattern.search(line):
+                    counts[key] += 1
+                    examples[key] = line[-600:]
+    return {"counts": counts, "examples": examples}
+
+
+def agent_model_rows(config):
+    defaults = ((config.get("agents") or {}).get("defaults") or {})
+    default_model = defaults.get("model") if isinstance(defaults.get("model"), dict) else {}
+    rows = []
+    for agent in ((config.get("agents") or {}).get("list") or []):
+        if not isinstance(agent, dict):
+            continue
+        model = agent.get("model") if isinstance(agent.get("model"), dict) else {}
+        effective = model or default_model
+        rows.append({
+            "id": agent.get("id") or "",
+            "name": agent.get("name") or agent.get("id") or "",
+            "primary": effective.get("primary") or "",
+            "fallbacks": effective.get("fallbacks") or [],
+            "runtime": ((agent.get("agentRuntime") or {}).get("id") if isinstance(agent.get("agentRuntime"), dict) else ""),
+        })
+    return rows
+
+
+def upgrade_guard_report():
+    config = openclaw_config()
+    openclaw_bin = openclaw_cli()
+    log_state = recent_openclaw_log_matches()
+    items = []
+    backups = sorted(UPGRADE_BACKUP_DIR.glob("*"), key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True) if UPGRADE_BACKUP_DIR.exists() else []
+    latest_backup = str(backups[0]) if backups else ""
+
+    if openclaw_bin:
+        version = run([openclaw_bin, "--version"], timeout=8).strip()
+        items.append(check_item("ok", "OpenClaw CLI", version or openclaw_bin))
+    else:
+        items.append(check_item("error", "缺少 OpenClaw CLI", "找不到 openclaw 命令。", "升级前必须先确认 CLI 可用。"))
+
+    config_path = OPENCLAW_HOME / "openclaw.json"
+    if config_path.exists():
+        items.append(check_item("ok", "主配置可备份", str(config_path)))
+    else:
+        items.append(check_item("error", "缺少主配置", str(config_path), "先完成 OpenClaw 初始化后再升级。"))
+
+    if can_connect_tcp("127.0.0.1", 18789):
+        items.append(check_item("ok", "Gateway 当前在线", "127.0.0.1:18789"))
+    else:
+        items.append(check_item("warn", "Gateway 当前未在线", "127.0.0.1:18789", "升级前建议记录当前状态，升级后再对比。"))
+
+    if latest_backup:
+        items.append(check_item("ok", "已有升级前备份", latest_backup))
+    else:
+        items.append(check_item("warn", "尚未创建升级前备份", str(UPGRADE_BACKUP_DIR), "升级前先点击“创建升级前备份”。"))
+
+    if not (((config.get("plugins") or {}).get("allow") or [])):
+        items.append(check_item("warn", "plugins.allow 为空", "非内置插件可能自动加载。", "稳定运行后建议固定可信插件列表。"))
+
+    if log_state["counts"].get("wecomPluginLoadFailed"):
+        items.append(check_item("error", "企业微信插件加载失败", "日志中发现 wecom-openclaw-plugin 找不到 openclaw 包。", "先修复插件依赖或安装方式，再验证 wecom。"))
+    if log_state["counts"].get("weixinRuntimeTimeout"):
+        items.append(check_item("warn", "个人微信运行时超时", "日志中发现 Weixin runtime initialization timeout。", "升级后要单独验证 openclaw-weixin 与微信客户端兼容性。"))
+
+    channels = config.get("channels") if isinstance(config.get("channels"), dict) else {}
+    bindings = config.get("bindings") if isinstance(config.get("bindings"), list) else []
+    if channels.get("wecom", {}).get("enabled") and not any(((binding.get("match") or {}).get("channel") == "wecom") for binding in bindings if isinstance(binding, dict)):
+        items.append(check_item("warn", "企业微信未绑定 agent", "channels.wecom 已启用，但 bindings 中没有 wecom 规则。", "插件恢复后再绑定到目标 agent。"))
+
+    for row in agent_model_rows(config):
+        if row["primary"].startswith("openai/") and not any(str(model).startswith("deepseek/") for model in row["fallbacks"]):
+            items.append(check_item("warn", f"{row['name']} 缺少 DeepSeek 兜底", row["primary"], "OpenAI 订阅模型不可用时，建议有 DeepSeek fallback。"))
+        if has_openai_api_key_profile(row["id"]):
+            items.append(check_item("error", f"{row['name']} 检测到 OpenAI API key profile", row["id"], "项目约定 OpenAI 模型走订阅，不走 API key。"))
+
+    sections = [
+        {"id": "guard", "title": "升级前护栏", "items": items, "level": level_worst(items)},
+        {
+            "id": "plugins",
+            "title": "插件快照",
+            "items": [
+                check_item("ok" if plugin.get("enabled", True) else "warn", plugin["id"], f"{plugin.get('source')} · {plugin.get('version') or '-'} · {plugin.get('path') or ''}")
+                for plugin in configured_plugins(config)
+            ] + [
+                check_item("ok", plugin["id"], f"{plugin.get('source')} · {plugin.get('version') or '-'} · channels={','.join(plugin.get('channels') or []) or '-'}")
+                for plugin in extension_plugin_report()
+            ],
+            "level": "ok",
+        },
+        {
+            "id": "logs",
+            "title": "最近日志信号",
+            "items": [
+                check_item("error" if key == "wecomPluginLoadFailed" and count else "warn" if count else "ok", key, f"{count} 条" + (f" · {log_state['examples'].get(key)}" if count else ""))
+                for key, count in log_state["counts"].items()
+            ],
+            "level": "error" if log_state["counts"].get("wecomPluginLoadFailed") else "warn" if any(log_state["counts"].values()) else "ok",
+        },
+    ]
+    return {
+        "ok": level_worst([{"level": section["level"]} for section in sections]) != "error",
+        "level": level_worst([{"level": section["level"]} for section in sections]),
+        "version": STUDIO_VERSION,
+        "latestBackup": latest_backup,
+        "backupDir": str(UPGRADE_BACKUP_DIR),
+        "openclawHome": str(OPENCLAW_HOME),
+        "configPreview": scrub_private({
+            "channels": config.get("channels"),
+            "bindings": config.get("bindings"),
+            "plugins": config.get("plugins"),
+            "agents": config.get("agents"),
+            "session": config.get("session"),
+            "modelByChannel": config.get("modelByChannel"),
+        }),
+        "sections": sections,
+    }
+
+
+def copy_backup_item(source, backup_root, copied, missing):
+    source = Path(source).expanduser()
+    if not source.exists():
+        missing.append(str(source))
+        return
+    if source.is_absolute():
+        relative = Path(*source.parts[1:])
+    else:
+        relative = source
+    target = backup_root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        shutil.copytree(source, target, dirs_exist_ok=True)
+    else:
+        shutil.copy2(source, target)
+    copied.append({"source": str(source), "target": str(target)})
+
+
+def create_upgrade_backup():
+    stamp = archive_timestamp()
+    backup_root = UPGRADE_BACKUP_DIR / stamp
+    copied = []
+    missing = []
+    backup_root.mkdir(parents=True, exist_ok=True)
+    launch_agent = Path.home() / "Library" / "LaunchAgents" / "ai.openclaw.gateway.plist"
+    for source in [
+        OPENCLAW_HOME / "openclaw.json",
+        AGENTS_DIR,
+        OPENCLAW_HOME / "extensions",
+        OPENCLAW_HOME / "npm" / "package.json",
+        OPENCLAW_HOME / "npm" / "package-lock.json",
+        OPENCLAW_HOME / "npm" / "pnpm-lock.yaml",
+        launch_agent,
+    ]:
+        copy_backup_item(source, backup_root, copied, missing)
+    manifest = {
+        "version": 1,
+        "createdAt": int(time.time() * 1000),
+        "createdText": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "studioVersion": STUDIO_VERSION,
+        "openclawHome": str(OPENCLAW_HOME),
+        "copied": copied,
+        "missing": missing,
+        "report": upgrade_guard_report(),
+        "note": "本目录是本机私有升级前备份，可能包含认证资料和会话历史，请勿提交到 Git 或分享。",
+    }
+    write_json(backup_root / "manifest.json", manifest)
+    (backup_root / "README.txt").write_text(
+        "OpenClaw Agents Studio 升级前备份\n\n"
+        "此目录可能包含 OpenClaw 配置、agent 资料、认证资料和会话索引。\n"
+        "请勿提交到 Git，也不要公开分享。\n\n"
+        "建议用途：升级后如果插件、频道、agent 或会话异常，可用这里的文件人工对照或回滚。\n",
+        encoding="utf-8",
+    )
+    return {"ok": True, "backupPath": str(backup_root), "copied": copied, "missing": missing, "report": upgrade_guard_report()}
 
 
 def get_access_token():
@@ -2332,6 +2616,7 @@ HTML = r"""<!doctype html>
               <button id="makeHandover" class="secondary">生成接力摘要</button>
               <button id="openHandoverDir" class="secondary">接力文件夹</button>
               <button id="showSetupDoctor" class="secondary">配置自检</button>
+              <button id="showUpgradeGuard" class="secondary">升级护航</button>
               <button id="archiveCurrentSession" class="secondary">归档会话</button>
               <button id="archiveCurrentTask" class="secondary">归档任务</button>
               <button id="showArchiveList" class="secondary">已归档列表</button>
@@ -3178,6 +3463,71 @@ HTML = r"""<!doctype html>
     await loadHealth();
   }
 
+  function renderUpgradeGuard(report) {
+    $("sessionTitle").textContent = "升级护航";
+    $("sessionMeta").textContent = `Upgrade Guard · Studio ${report.version || "-"} · ${report.latestBackup ? "已有升级前备份" : "尚未备份"}`;
+    setSyncStatus("升级护航：升级前冻结现场，升级后对照插件、频道、agent 和日志状态。");
+    $("handover").className = "handover";
+    $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
+    $("blackholeWorkshopSlot").innerHTML = "";
+    const previewText = JSON.stringify(report.configPreview || {}, null, 2);
+    $("messages").innerHTML = `
+      <div class="doctorPage">
+        <div class="doctorHero">
+          <h2>Upgrade Guard / 升级护航</h2>
+          <p>这里用于升级 OpenClaw 前后做对照。检查默认只读；“创建升级前备份”只把关键文件复制到本机私有备份目录，不修改 OpenClaw 配置、插件、agent 或会话。</p>
+          <div class="doctorActions">
+            <button id="refreshUpgradeGuard" type="button">重新检查</button>
+            <button id="createUpgradeBackup" class="secondary" type="button">创建升级前备份</button>
+            ${report.latestBackup ? `<button class="secondary" data-open-path="${esc(report.latestBackup)}" type="button">打开最近备份</button>` : ""}
+          </div>
+        </div>
+        ${(report.sections || []).map(section => `
+          <div class="doctorSection">
+            <div class="doctorSectionHeader">
+              <div class="doctorSectionTitle">${esc(section.title)}</div>
+              <span class="doctorPill ${esc(section.level)}">${esc(doctorLevelText(section.level))}</span>
+            </div>
+            ${(section.items || []).map(item => `
+              <div class="doctorItem">
+                <span class="doctorMark ${esc(item.level)}">${esc(doctorMark(item.level))}</span>
+                <div>
+                  <div class="doctorItemTitle">${esc(item.title)}</div>
+                  ${item.detail ? `<div class="doctorDetail">${esc(item.detail)}</div>` : ""}
+                  ${item.action ? `<div class="doctorAction">${esc(item.action)}</div>` : ""}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `).join("")}
+        <div class="doctorSection">
+          <div class="doctorSectionHeader">
+            <div class="doctorSectionTitle">已脱敏配置预览</div>
+            <span class="doctorPill ok">只读</span>
+          </div>
+          <div class="doctorPaths">${esc(previewText)}</div>
+        </div>
+        <div class="doctorPaths">backupDir: ${esc(report.backupDir || "")}\nopenclawHome: ${esc(report.openclawHome || "")}</div>
+      </div>`;
+  }
+
+  async function showUpgradeGuard() {
+    const report = await fetch("/api/upgrade-guard").then(r => r.json());
+    renderUpgradeGuard(report);
+  }
+
+  async function createUpgradeBackup() {
+    if (!confirm("创建升级前备份？\n\n会复制 OpenClaw 主配置、agents、extensions 和 LaunchAgent plist 到本机私有备份目录。备份可能包含认证资料和会话索引，请勿提交或分享。")) return;
+    const result = await fetch("/api/upgrade-guard/backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then(r => r.json());
+    if (!result.ok) return alert(result.error || "创建备份失败");
+    renderUpgradeGuard(result.report);
+    setSyncStatus(`升级护航：已创建备份 ${result.backupPath}`);
+  }
+
   async function restoreArchive(kind, archiveId) {
     const path = kind === "blackhole" ? "/api/blackhole/restore" : "/api/session/restore";
     const result = await fetch(path, {
@@ -3496,6 +3846,24 @@ HTML = r"""<!doctype html>
       await fixSetupDoctor();
       return;
     }
+    if (event.target.closest("#refreshUpgradeGuard")) {
+      await showUpgradeGuard();
+      return;
+    }
+    if (event.target.closest("#createUpgradeBackup")) {
+      await createUpgradeBackup();
+      return;
+    }
+    const openPathButton = event.target.closest("[data-open-path]");
+    if (openPathButton) {
+      const result = await fetch("/api/open-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: openPathButton.dataset.openPath }),
+      }).then(r => r.json());
+      if (!result.ok) alert(result.error || "打开失败");
+      return;
+    }
     const restore = event.target.closest("[data-archive-restore]");
     if (restore) {
       await restoreArchive(restore.dataset.archiveKind, restore.dataset.archiveRestore);
@@ -3573,6 +3941,7 @@ HTML = r"""<!doctype html>
   $("cancelBlackhole").onclick = cancelCurrentBlackholeTask;
   $("showArchiveList").onclick = showArchiveList;
   $("showSetupDoctor").onclick = showSetupDoctor;
+  $("showUpgradeGuard").onclick = showUpgradeGuard;
   $("runBlackhole").onclick = async () => {
     if (!currentTask) return alert("先创建或选择一个黑洞协作任务");
     const result = await fetch("/api/blackhole/run", {
@@ -3855,6 +4224,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_auth():
                 return
             self.send_json(setup_doctor_report())
+        elif parsed.path == "/api/upgrade-guard":
+            if not self.require_auth():
+                return
+            self.send_json(upgrade_guard_report())
         elif parsed.path == "/api/auto-handover":
             if not self.require_auth():
                 return
@@ -3926,6 +4299,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/handover",
             "/api/auto-handover-now",
             "/api/setup-doctor/fix",
+            "/api/upgrade-guard/backup",
             "/api/open-handover-dir",
             "/api/open-path",
             "/api/session/archive",
@@ -3960,6 +4334,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/setup-doctor/fix":
             self.send_json(setup_doctor_fix())
+            return
+        if self.path == "/api/upgrade-guard/backup":
+            self.send_json(create_upgrade_backup())
             return
         if self.path == "/api/open-path":
             target = Path(data.get("path") or "")

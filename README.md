@@ -14,6 +14,7 @@ The project is extracted from a real personal workflow and cleaned for open-sour
 - Blackhole collaboration mode: run several OpenClaw agents in separate sessions and aggregate their progress in one task view.
 - Pixel studio status layer for agent activity without replacing the functional text cards.
 - Archive-first cleanup flow for sessions and blackhole tasks.
+- Upgrade Guard: pre-upgrade checks and local private backups for OpenClaw config, agents, extensions, and plugin snapshots.
 
 ## Requirements
 
@@ -105,6 +106,14 @@ Setup Doctor checks local services, OpenClaw CLI/Gateway, session storage, multi
 
 More details: [docs/SETUP_DOCTOR.md](docs/SETUP_DOCTOR.md)
 
+## Upgrade Guard
+
+Before upgrading OpenClaw, open `Tools -> 升级护航`.
+
+Upgrade Guard gives you a read-only snapshot of the current OpenClaw CLI, Gateway, plugins, channel warnings, model fallback risks, and recent log signals. Its backup action copies key local OpenClaw files into `~/.openclaw/session-viewer-state/upgrade-backups/` for manual comparison or rollback. The backup may contain private auth and session data, so do not commit or share it.
+
+More details: [docs/UPGRADE_GUARD.md](docs/UPGRADE_GUARD.md)
+
 ## Safety
 
 - This tool reads local OpenClaw sessions, optional Obsidian notes, and local attachment cache files.
@@ -130,7 +139,8 @@ More details: [docs/SETUP_DOCTOR.md](docs/SETUP_DOCTOR.md)
 ├── CONTRIBUTING.md
 └── docs/
     ├── OPEN_SOURCE_CHECKLIST.md
-    └── SETUP_DOCTOR.md
+    ├── SETUP_DOCTOR.md
+    └── UPGRADE_GUARD.md
 ```
 
 ## Development

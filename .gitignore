@@ -13,6 +13,11 @@ venv/
 dist/
 build/
 
+# Generated local promo/media package. Keep large media out of the source repo;
+# publish it as a release asset when needed.
+promo-kit/
+openclaw-agents-studio-promo-kit.zip
+
 .openclaw/
 session-viewer-remote/
 session-viewer-attachments/

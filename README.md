@@ -137,6 +137,8 @@ After a blackhole task is created, the bottom composer continues the current tas
 
 Follow-up instructions are written back to the task file, and each agent keeps a short round history so previous replies are not overwritten.
 
+Typing `@` in the blackhole composer opens an agent mention menu. Keep typing to filter, use `Up/Down` to select, and press `Enter` or `Tab` to complete.
+
 ## Setup Doctor
 
 After the first launch, or after upgrading the project, open `Tools -> 配置自检`.

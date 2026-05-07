@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.7"
+STUDIO_VERSION = "0.1.8"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -2794,6 +2794,13 @@ HTML = r"""<!doctype html>
     form { border-top: 1px solid var(--hairline); padding: 10px 14px calc(16px + env(safe-area-inset-bottom)); background: var(--canvas); min-width: 0; max-width: 100%; overflow: hidden; }
     .composer { position: relative; border: 1px solid var(--hairline-strong); border-radius: 16px; background: var(--canvas); overflow: hidden; box-shadow: 0 4px 18px rgba(10,21,48,.08); min-width: 0; max-width: 100%; }
     textarea { width: 100%; box-sizing: border-box; min-height: 56px; max-height: 220px; resize: none; border: 0; padding: 12px 12px 8px 44px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; outline: none; }
+    .mentionMenu { position: absolute; left: 42px; right: 10px; bottom: 42px; display: none; gap: 5px; max-height: 190px; overflow: auto; padding: 8px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--canvas); box-shadow: 0 16px 46px rgba(10,21,48,.18); z-index: 30; }
+    .mentionMenu.show { display: grid; }
+    .mentionOption { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; width: 100%; padding: 8px 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; }
+    .mentionOption:hover, .mentionOption.active { background: var(--surface-soft); border-color: var(--hairline); }
+    .mentionAvatar { width: 26px; height: 26px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--brand-navy); color: #fff; font-size: 11px; font-weight: 800; }
+    .mentionLabel { font-weight: 700; font-size: 13px; line-height: 1.2; }
+    .mentionId { color: var(--steel); font-size: 11px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .resizeHandle { position: absolute; left: 10px; top: 10px; width: 28px; height: 28px; padding: 0; border-radius: 7px; background: transparent; color: var(--steel); border: 1px solid transparent; cursor: ns-resize; z-index: 2; font-size: 17px; line-height: 1; }
     .resizeHandle:hover { background: var(--surface); border-color: var(--hairline); color: var(--ink); }
     .composerToolbar { min-height: 38px; border-top: 1px solid var(--hairline-soft); display: flex; align-items: center; gap: 7px; padding: 6px 8px; min-width: 0; }
@@ -2844,6 +2851,7 @@ HTML = r"""<!doctype html>
       .msg.system { max-width: calc(100vw - 36px); }
       form { padding: 8px calc(10px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left)); width: 100%; }
       textarea { min-height: 50px; font-size: 13px; }
+      .mentionMenu { left: 8px; right: 8px; bottom: 40px; max-height: 170px; }
       .deliverStatus { max-width: 38vw; }
       .composerToolbar { gap: 5px; }
       .blackholeWorkshopSlot { padding: 5px 10px 0; }
@@ -2941,6 +2949,7 @@ HTML = r"""<!doctype html>
       <div class="composer">
         <button id="resizeComposer" class="resizeHandle" type="button" title="拖动调整输入框高度">⌟</button>
         <textarea id="message" placeholder="Message Assistant (Enter to send)"></textarea>
+        <div id="mentionMenu" class="mentionMenu"></div>
         <div id="attachmentList" class="attachmentList"></div>
         <div class="composerToolbar">
           <input id="attachmentInput" type="file" multiple hidden>
@@ -3058,6 +3067,7 @@ HTML = r"""<!doctype html>
   const defaultBlackholeAgents = ["codex-agent", "guardian-agent", "memory-agent", "researcher-agent"];
   let blackholeAgentOrder = blackholeAgents.map(agent => agent.id);
   let blackholeSelectedAgents = new Set(defaultBlackholeAgents);
+  let mentionState = { open: false, start: -1, query: "", items: [], index: 0 };
 
   function esc(v) {
     return String(v ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -3107,6 +3117,7 @@ HTML = r"""<!doctype html>
     $("searchBox").disabled = mode === "blackhole";
     $("reloadMessages").disabled = mode === "blackhole";
     if (mode === "sessions") {
+      hideMentionMenu();
       currentTask = null;
       $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
       $("blackholeWorkshopSlot").innerHTML = "";
@@ -3117,6 +3128,7 @@ HTML = r"""<!doctype html>
       current = null;
       currentMessages = [];
       $("message").placeholder = "描述要让多个 agent 协作处理的问题...";
+      hideMentionMenu();
       clearCurrentAttachments();
       loadBlackholeTasks();
       renderBlackholeTask();
@@ -3397,6 +3409,108 @@ HTML = r"""<!doctype html>
   function blackholeAgentLabel(agentId) {
     const item = blackholeAgents.find(agent => agent.id === agentId);
     return item ? item.label : agentId;
+  }
+
+  function mentionAliases(agent) {
+    const base = [agent.label, agent.id];
+    const extras = {
+      "codex-agent": ["主脑", "总协调", "协调者"],
+      "executor-agent": ["执行者", "执行"],
+      "guardian-agent": ["守护", "guardian"],
+      "researcher-agent": ["研究", "researcher"],
+      "life-agent": ["助理", "生活", "生活助理"],
+      "memory-agent": ["档案", "记录", "记录者", "memory"],
+    }[agent.id] || [];
+    return base.concat(extras);
+  }
+
+  function mentionCandidates(query = "") {
+    const q = query.trim().toLowerCase();
+    const allItem = { id: "all", label: "all", insert: "@all", description: "全部 agent" };
+    const items = blackholeAgents.map(agent => ({
+      ...agent,
+      insert: `@${agent.label}`,
+      description: agent.id,
+      aliases: mentionAliases(agent),
+    })).concat([allItem]);
+    if (!q) return items;
+    return items.filter(item => {
+      const aliases = item.aliases || [item.label, item.id, item.description];
+      return aliases.some(alias => String(alias).toLowerCase().includes(q));
+    });
+  }
+
+  function currentMentionRange() {
+    if (viewMode !== "blackhole") return null;
+    const textarea = $("message");
+    const cursor = textarea.selectionStart;
+    const before = textarea.value.slice(0, cursor);
+    const match = before.match(/(?:^|\s)@([A-Za-z0-9_.:-]*|[\u4e00-\u9fff]*)$/);
+    if (!match) return null;
+    const token = match[0];
+    const start = cursor - token.length + token.indexOf("@");
+    return { start, end: cursor, query: match[1] || "" };
+  }
+
+  function hideMentionMenu() {
+    mentionState = { open: false, start: -1, query: "", items: [], index: 0 };
+    const menu = $("mentionMenu");
+    if (menu) {
+      menu.className = "mentionMenu";
+      menu.innerHTML = "";
+    }
+  }
+
+  function renderMentionMenu() {
+    const menu = $("mentionMenu");
+    if (!mentionState.open || !mentionState.items.length) {
+      hideMentionMenu();
+      return;
+    }
+    menu.className = "mentionMenu show";
+    menu.innerHTML = mentionState.items.map((item, index) => `
+      <button class="mentionOption ${index === mentionState.index ? "active" : ""}" type="button" data-mention="${index}">
+        <span class="mentionAvatar">${esc((item.label || item.id).slice(0, 2))}</span>
+        <span>
+          <span class="mentionLabel">@${esc(item.label)}</span>
+          <span class="mentionId">${esc(item.description || item.id)}</span>
+        </span>
+      </button>`).join("");
+  }
+
+  function updateMentionMenu() {
+    const range = currentMentionRange();
+    if (!range) {
+      hideMentionMenu();
+      return;
+    }
+    const items = mentionCandidates(range.query);
+    if (!items.length) {
+      hideMentionMenu();
+      return;
+    }
+    mentionState = {
+      open: true,
+      start: range.start,
+      query: range.query,
+      items,
+      index: Math.min(mentionState.index || 0, items.length - 1),
+    };
+    renderMentionMenu();
+  }
+
+  function applyMention(item) {
+    if (!item || mentionState.start < 0) return;
+    const textarea = $("message");
+    const cursor = textarea.selectionStart;
+    const before = textarea.value.slice(0, mentionState.start);
+    const after = textarea.value.slice(cursor);
+    const insert = `${item.insert || "@" + item.label} `;
+    textarea.value = before + insert + after;
+    const next = before.length + insert.length;
+    textarea.focus();
+    textarea.setSelectionRange(next, next);
+    hideMentionMenu();
   }
 
   function blackholeAgentRoleClass(agentId) {
@@ -4160,7 +4274,10 @@ HTML = r"""<!doctype html>
   };
   $("searchPrev").onclick = () => jumpSearch(-1);
   $("searchNext").onclick = () => jumpSearch(1);
-  $("message").addEventListener("input", saveCurrentDraft);
+  $("message").addEventListener("input", () => {
+    saveCurrentDraft();
+    updateMentionMenu();
+  });
   $("resizeComposer").addEventListener("pointerdown", (event) => {
     event.preventDefault();
     const textarea = $("message");
@@ -4181,11 +4298,42 @@ HTML = r"""<!doctype html>
     $("resizeComposer").addEventListener("pointercancel", onUp);
   });
   $("message").addEventListener("keydown", (event) => {
+    if (mentionState.open) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        mentionState.index = (mentionState.index + 1) % mentionState.items.length;
+        renderMentionMenu();
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        mentionState.index = (mentionState.index - 1 + mentionState.items.length) % mentionState.items.length;
+        renderMentionMenu();
+        return;
+      }
+      if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        applyMention(mentionState.items[mentionState.index]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        hideMentionMenu();
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       $("sendForm").requestSubmit();
     }
   });
+  $("message").addEventListener("click", updateMentionMenu);
+  $("message").addEventListener("blur", () => setTimeout(hideMentionMenu, 150));
+  $("mentionMenu").onclick = (event) => {
+    const option = event.target.closest("[data-mention]");
+    if (!option) return;
+    applyMention(mentionState.items[Number(option.dataset.mention)]);
+  };
   $("attachBtn").onclick = () => $("attachmentInput").click();
   $("newSessionBtn").onclick = createDraftSession;
   $("attachmentInput").onchange = async (event) => {

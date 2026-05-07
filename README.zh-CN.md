@@ -9,6 +9,7 @@
 - OpenClaw 会话列表：优先显示常用频道会话，支持实时更新和最近消息摘要。
 - 会话详情：查看历史、发送消息、打开对应 TUI、生成 Obsidian 接力摘要。
 - 移动端访问：可通过 Cloudflare Quick Tunnel 临时开放给手机浏览器访问，并使用 6 位访问码保护。
+- 远程访问启动通知：隧道启动后自动把远程地址和访问码发送到最近的个人微信与企业微信直聊会话。
 - 黑洞协作：为多个 agent 创建独立 session，聚合展示任务进度和回复。
 - 像素工作室：用轻量状态层展示 agent 是否被调用、运行中、完成、跳过或发呆。
 - 归档机制：默认归档会话和黑洞任务，永久删除需要二次确认。
@@ -75,6 +76,7 @@ http://127.0.0.1:8766
 | `OPENCLAW_SESSION_VIEWER_HOST` | `127.0.0.1` | 本机服务监听地址 |
 | `OPENCLAW_SESSION_VIEWER_PORT` | `8766` | 本机服务端口 |
 | `OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR` | `~/Documents/Obsidian Vault/OpenClaw` | 接力摘要和黑洞协作文件目录 |
+| `OPENCLAW_REMOTE_NOTIFY` | `1` | 隧道启动后自动通知最近的频道会话；设为 `0` 可关闭 |
 
 示例：
 

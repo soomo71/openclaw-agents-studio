@@ -6,6 +6,7 @@ OpenClaw Agents Studio is designed as a local-first helper tool. It can expose a
 
 - Local access through `127.0.0.1`.
 - Temporary mobile access through Cloudflare Quick Tunnel plus the generated 6 digit access code.
+- Optional startup notification that sends the temporary remote URL and access code through locally configured OpenClaw chat channels.
 - Personal or trusted-device workflows.
 
 ## Do Not Commit
@@ -15,6 +16,7 @@ Do not commit:
 - `.openclaw` data
 - `.tools/cloudflared`
 - access tokens or remote tunnel state
+- notification logs containing temporary remote URLs or access codes
 - API keys
 - local logs
 - private Obsidian notes

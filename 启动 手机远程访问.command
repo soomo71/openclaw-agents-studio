@@ -283,6 +283,166 @@ PLIST
     echo "日志：$TUNNEL_LOG"
     echo "更新时间：$(date '+%Y-%m-%d %H:%M:%S')"
   } > "$INFO_FILE"
+
+  notify_channels() {
+    if [ "${OPENCLAW_REMOTE_NOTIFY:-1}" = "0" ]; then
+      echo "已跳过频道通知：OPENCLAW_REMOTE_NOTIFY=0"
+      return 0
+    fi
+
+    echo "正在发送远程访问信息到个人微信和企业微信..."
+    SERVICE_PATH="$SERVICE_PATH" /usr/bin/python3 - "$INFO_FILE" <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+info_file = Path(sys.argv[1]).expanduser()
+home = Path.home()
+openclaw_home = Path(os.environ.get("OPENCLAW_HOME", home / ".openclaw")).expanduser()
+agents_dir = openclaw_home / "agents"
+state_dir = openclaw_home / "session-viewer-remote"
+notify_log = state_dir / "notify-last.json"
+
+service_path = os.environ.get("SERVICE_PATH", "")
+if service_path:
+    os.environ["PATH"] = service_path + ":" + os.environ.get("PATH", "")
+os.environ.setdefault("OPENCLAW_CONFIG_PATH", str(openclaw_home / "openclaw.json"))
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def openclaw_bin():
+    found = shutil.which("openclaw")
+    if found:
+        return found
+    fallback = openclaw_home / "bin" / "openclaw"
+    return str(fallback) if fallback.exists() else ""
+
+def session_channel(value):
+    origin = value.get("origin") or {}
+    delivery = value.get("deliveryContext") or {}
+    return value.get("lastChannel") or delivery.get("channel") or origin.get("provider") or ""
+
+def session_target(value):
+    origin = value.get("origin") or {}
+    delivery = value.get("deliveryContext") or {}
+    return value.get("lastTo") or delivery.get("to") or origin.get("to") or ""
+
+def session_account(value):
+    origin = value.get("origin") or {}
+    delivery = value.get("deliveryContext") or {}
+    return value.get("lastAccountId") or delivery.get("accountId") or origin.get("accountId") or ""
+
+def session_chat_type(key, value):
+    origin = value.get("origin") or {}
+    return value.get("chatType") or origin.get("chatType") or ("group" if ":group:" in key else "direct")
+
+def find_latest_direct(agent_id, channel):
+    path = agents_dir / agent_id / "sessions" / "sessions.json"
+    data = read_json(path)
+    best = None
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        if session_channel(value) != channel:
+            continue
+        if session_chat_type(key, value) != "direct":
+            continue
+        target = session_target(value)
+        if not target:
+            continue
+        row = {
+            "agentId": agent_id,
+            "channel": channel,
+            "key": key,
+            "target": target,
+            "accountId": session_account(value),
+            "updatedAt": value.get("updatedAt") or 0,
+        }
+        if best is None or row["updatedAt"] > best["updatedAt"]:
+            best = row
+    return best
+
+def build_message():
+    text = info_file.read_text(encoding="utf-8", errors="replace").strip() if info_file.exists() else ""
+    lines = [line for line in text.splitlines() if line.strip()]
+    values = {}
+    for line in lines:
+        if "：" in line:
+            key, value = line.split("：", 1)
+            values[key.strip()] = value.strip()
+    return "\n".join([
+        "OpenClaw 手机远程访问已启动",
+        "",
+        f"远程地址：{values.get('远程地址', '-')}",
+        f"访问码：{values.get('访问码', '-')}",
+        f"本机地址：{values.get('本机地址', '-')}",
+        f"远程隧道状态：运行中，PID {values.get('隧道 PID', '-')}",
+        f"更新时间：{values.get('更新时间', '-')}",
+    ])
+
+def send_message(target, message):
+    cli = openclaw_bin()
+    if not cli:
+        return {"ok": False, "error": "missing openclaw cli"}
+    cmd = [
+        cli,
+        "message",
+        "send",
+        "--channel",
+        target["channel"],
+        "--target",
+        target["target"],
+        "--message",
+        message,
+        "--json",
+    ]
+    if target.get("accountId"):
+        cmd.extend(["--account", target["accountId"]])
+    try:
+        raw = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, timeout=60)
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = {"raw": raw[-1000:]}
+        return {"ok": not payload.get("error"), "payload": payload}
+    except subprocess.CalledProcessError as exc:
+        return {"ok": False, "error": (exc.output or str(exc))[-1000:]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+message = build_message()
+targets = [
+    ("个人微信", find_latest_direct("codex-agent", "openclaw-weixin")),
+    ("企业微信", find_latest_direct("life-agent", "wecom")),
+]
+results = []
+for label, target in targets:
+    if not target:
+        results.append({"label": label, "ok": False, "error": "没有找到可用 direct session"})
+        continue
+    result = send_message(target, message)
+    result.update({"label": label, "channel": target["channel"], "sessionKey": target["key"]})
+    results.append(result)
+
+state_dir.mkdir(parents=True, exist_ok=True)
+notify_log.write_text(json.dumps({"message": message, "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+for item in results:
+    status = "成功" if item.get("ok") else "失败"
+    detail = item.get("error") or item.get("channel") or ""
+    print(f"- {item['label']}通知{status} {detail}")
+print(f"通知记录：{notify_log}")
+PY
+  }
+
+  notify_channels
+
   printf "%s" "$REMOTE_URL" | pbcopy
   osascript -e "display notification \"访问码：$ACCESS_TOKEN，地址已复制\" with title \"OpenClaw 手机远程访问\"" >/dev/null 2>&1 || true
   echo "你可以把上面的网址发到手机浏览器打开，然后输入访问码。"

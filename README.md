@@ -11,6 +11,7 @@ The project is extracted from a real personal workflow and cleaned for open-sour
 - Session list with live updates, latest-message previews, and channel-aware labels.
 - Session detail view with message sending, TUI launch, search, handoff notes, and archiving.
 - Optional mobile access through Cloudflare Quick Tunnel protected by a generated 6 digit access code.
+- Mobile remote startup notifications to the latest direct personal WeChat and WeCom sessions when those channels exist locally.
 - Blackhole collaboration mode: run several OpenClaw agents in separate sessions and aggregate their progress in one task view.
 - Pixel studio status layer for agent activity without replacing the functional text cards.
 - Archive-first cleanup flow for sessions and blackhole tasks.
@@ -75,6 +76,7 @@ Defaults work for a single local user. Override them with environment variables 
 | `OPENCLAW_SESSION_VIEWER_HOST` | `127.0.0.1` | Local server bind host |
 | `OPENCLAW_SESSION_VIEWER_PORT` | `8766` | Local server port |
 | `OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR` | `~/Documents/Obsidian Vault/OpenClaw` | Handoff and blackhole workspace directory |
+| `OPENCLAW_REMOTE_NOTIFY` | `1` | Send mobile remote URL/access code to recent channel sessions after tunnel startup. Set to `0` to disable |
 
 Example:
 

@@ -30,7 +30,7 @@ echo "本机地址：$LOCAL_URL"
 echo ""
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "缺少 Python 3，无法启动 OpenClaw 会话工具。"
+  echo "缺少 Python 3，无法启动 OpenClaw 智能体工作室。"
   echo "建议先安装 Xcode Command Line Tools，或从 https://www.python.org/downloads/ 安装 Python 3。"
   read "?按回车关闭窗口..."
   exit 1
@@ -62,18 +62,18 @@ PY
 
 ensure_viewer() {
   if curl -fsS "$LOCAL_URL/api/health" >/dev/null 2>&1; then
-    echo "OpenClaw 会话工具已经在运行。"
+    echo "OpenClaw 智能体工作室已经在运行。"
     return 0
   fi
 
   if lsof -tiTCP:"$VIEWER_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "端口 $VIEWER_PORT 已被其他程序占用，但不是可用的会话工具。"
+    echo "端口 $VIEWER_PORT 已被其他程序占用，但不是可用的智能体工作室。"
     lsof -nP -iTCP:"$VIEWER_PORT" -sTCP:LISTEN
     read "?请关闭占用程序后再试。按回车关闭窗口..."
     exit 1
   fi
 
-  echo "正在后台启动 OpenClaw 会话工具..."
+  echo "正在后台启动 OpenClaw 智能体工作室..."
   cat > "$VIEWER_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,7 +102,7 @@ ensure_viewer() {
 PLIST
   launchctl bootout "$LAUNCHD_DOMAIN" "$VIEWER_PLIST" >/dev/null 2>&1 || true
   if ! launchctl bootstrap "$LAUNCHD_DOMAIN" "$VIEWER_PLIST" >/dev/null 2>&1; then
-    echo "OpenClaw 会话工具后台服务启动失败。日志：$VIEWER_LOG"
+    echo "OpenClaw 智能体工作室后台服务启动失败。日志：$VIEWER_LOG"
     tail -80 "$VIEWER_LOG" 2>/dev/null
     read "?按回车关闭窗口..."
     exit 1
@@ -110,13 +110,13 @@ PLIST
 
   for i in {1..30}; do
     if curl -fsS "$LOCAL_URL/api/health" >/dev/null 2>&1; then
-      echo "OpenClaw 会话工具已启动。"
+      echo "OpenClaw 智能体工作室已启动。"
       return 0
     fi
     sleep 1
   done
 
-  echo "OpenClaw 会话工具启动超时。日志：$VIEWER_LOG"
+  echo "OpenClaw 智能体工作室启动超时。日志：$VIEWER_LOG"
   tail -80 "$VIEWER_LOG" 2>/dev/null
   read "?按回车关闭窗口..."
   exit 1

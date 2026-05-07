@@ -1,6 +1,6 @@
 #!/bin/zsh
 SCRIPT_DIR="${0:A:h}"
-TARGET="$SCRIPT_DIR/启动 OpenClaw 会话工具.command"
+TARGET="$SCRIPT_DIR/启动 OpenClaw 智能体工作室.command"
 
 if [ ! -f "$TARGET" ]; then
   echo "Cannot find launcher: $TARGET"

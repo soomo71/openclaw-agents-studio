@@ -2,18 +2,33 @@
 
 [中文说明](README.zh-CN.md)
 
-OpenClaw Agents Studio is a local-first web workspace for OpenClaw sessions. It lets you inspect session history, continue channel-originated conversations, open matching TUI sessions, write Obsidian handoff notes, and coordinate multiple OpenClaw agents through a compact "blackhole collaboration" panel.
+OpenClaw Agents Studio is a local-first workspace for OpenClaw and Codex-powered agent workflows. It brings desktop use, mobile access, personal WeChat, WeCom, OpenClaw TUI, Codex agents, multi-agent collaboration, and Obsidian handoff notes into one compact operator console.
 
 The project is extracted from a real personal workflow and cleaned for open-source use. It is designed to be copied to any folder on macOS and launched with a double-click command file.
+
+For a fuller Chinese product overview, see [docs/PRODUCT_OVERVIEW.zh-CN.md](docs/PRODUCT_OVERVIEW.zh-CN.md).
+
+## What It Helps With
+
+- Continue OpenClaw conversations that started from personal WeChat or WeCom on your desktop.
+- Inspect multiple agent sessions, histories, models, and context usage in one place.
+- Open the matching OpenClaw TUI session when you need the native terminal flow.
+- Expose the local workspace to your phone through a temporary Cloudflare Quick Tunnel.
+- Send the temporary mobile URL and access code back to your latest WeChat and WeCom direct sessions.
+- Keep Obsidian handoff notes so long-running work can survive context resets.
+- Coordinate several specialized agents around the same task through the blackhole collaboration panel.
 
 ## Features
 
 - Session list with live updates, latest-message previews, and channel-aware labels.
-- Session detail view with message sending, TUI launch, search, handoff notes, and archiving.
+- Channel-aware desktop bridge for personal WeChat `openclaw-weixin`, WeCom `wecom`, and other OpenClaw channel sessions.
+- Codex-oriented sessions for `codex-agent`, OpenAI subscription model usage, Codex runtime continuity, and fallback model planning.
+- Session detail view with message sending, attachments, TUI launch, search, handoff notes, and archiving.
 - Optional mobile access through Cloudflare Quick Tunnel protected by a generated 6 digit access code.
 - Mobile remote startup notifications to the latest direct personal WeChat and WeCom sessions when those channels exist locally.
 - Blackhole collaboration mode: run several OpenClaw agents in separate sessions and aggregate their progress in one task view.
-- Pixel studio status layer for agent activity without replacing the functional text cards.
+- Multi-perspective agent roles such as CEO, Guardian, Researcher, Assistant, and Archivist.
+- Pixel studio status layer: tiny workstation characters show whether an agent is called, running, done, skipped, or idle without replacing the functional text cards.
 - Archive-first cleanup flow for sessions and blackhole tasks.
 - Upgrade Guard: pre-upgrade checks and local private backups for OpenClaw config, agents, extensions, and plugin snapshots.
 
@@ -48,6 +63,7 @@ This starts:
 Chinese launchers are also kept for convenience:
 
 ```text
+启动 OpenClaw 智能体工作室.command
 启动 OpenClaw 会话工具.command
 启动 手机远程访问.command
 停止 手机远程访问.command
@@ -129,6 +145,7 @@ More details: [docs/UPGRADE_GUARD.md](docs/UPGRADE_GUARD.md)
 .
 ├── openclaw_session_viewer.py
 ├── Start OpenClaw Agents Studio.command
+├── 启动 OpenClaw 智能体工作室.command
 ├── Start Mobile Remote Access.command
 ├── Stop Mobile Remote Access.command
 ├── Show Mobile Remote Access.command
@@ -141,6 +158,7 @@ More details: [docs/UPGRADE_GUARD.md](docs/UPGRADE_GUARD.md)
 ├── CONTRIBUTING.md
 └── docs/
     ├── OPEN_SOURCE_CHECKLIST.md
+    ├── PRODUCT_OVERVIEW.zh-CN.md
     ├── SETUP_DOCTOR.md
     └── UPGRADE_GUARD.md
 ```

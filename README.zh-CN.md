@@ -1,17 +1,33 @@
-# OpenClaw Agents Studio
+# OpenClaw 智能体工作室
 
-一个面向 OpenClaw 的本地会话工作台：查看会话、继续发送消息、打开 TUI、整理接力摘要，并用“黑洞协作”把多个 agent 的独立会话聚合到同一个任务面板里。
+英文名：OpenClaw Agents Studio。
+
+这是一个面向 OpenClaw 和 Codex 工作流的本地智能体工作室。它把桌面端、手机端、个人微信、企业微信、OpenClaw TUI、Codex agent、多 agent 协作和 Obsidian 接力记录放在同一个轻量工作台里。
 
 这个项目来自一个真实的个人工作流，开源版会尽量保持“复制到任意 Mac 文件夹后双击可用”，同时避免把本机二进制、访问码、日志和个人状态文件放进仓库。
 
+更完整的产品介绍见：[docs/PRODUCT_OVERVIEW.zh-CN.md](docs/PRODUCT_OVERVIEW.zh-CN.md)
+
+## 它适合做什么
+
+- 在电脑上继续处理从个人微信或企业微信发起的 OpenClaw 对话。
+- 在一个界面里查看多个 agent 的 session、历史、模型和上下文占用。
+- 直接打开对应 OpenClaw TUI，回到更原生的终端操作模式。
+- 用手机远程访问电脑上的工作室，并自动把临时访问地址和访问码发回微信端。
+- 把重要会话整理成 Obsidian 接力摘要，让上下文满了以后也能继续。
+- 用“黑洞协作”让多个智能体从不同角度看同一个问题。
+
 ## 功能
 
-- OpenClaw 会话列表：优先显示常用频道会话，支持实时更新和最近消息摘要。
-- 会话详情：查看历史、发送消息、打开对应 TUI、生成 Obsidian 接力摘要。
+- OpenClaw 会话列表：优先显示常用频道会话，支持实时更新、最近消息摘要、上下文占用提示。
+- 频道协同：识别个人微信 `openclaw-weixin`、企业微信 `wecom` 等频道会话，桌面发送时可同步回对应频道端。
+- Codex 工作流：支持 `codex-agent`、OpenAI 订阅模型、Codex runtime 会话，并保留 DeepSeek 等备用模型策略。
+- 会话详情：查看历史、发送消息、挂附件、打开对应 TUI、生成 Obsidian 接力摘要。
 - 移动端访问：可通过 Cloudflare Quick Tunnel 临时开放给手机浏览器访问，并使用 6 位访问码保护。
 - 远程访问启动通知：隧道启动后自动把远程地址和访问码发送到最近的个人微信与企业微信直聊会话。
 - 黑洞协作：为多个 agent 创建独立 session，聚合展示任务进度和回复。
-- 像素工作室：用轻量状态层展示 agent 是否被调用、运行中、完成、跳过或发呆。
+- 多视角智能体：默认包含 CEO、守护者、研究员、小助理、档案师等角色，适合从执行、审查、研究、生活安排、档案整理等角度协同看问题。
+- 像素工作室：用很小的像素卡通工位展示 agent 是否被调用、运行中、完成、跳过或发呆；它只是状态层，不替代文字记录和操作按钮。
 - 归档机制：默认归档会话和黑洞任务，永久删除需要二次确认。
 - 升级护航：升级 OpenClaw 前做状态检查，并创建本机私有备份用于对照或回滚。
 
@@ -32,6 +48,12 @@ openclaw status
 ## 快速开始
 
 双击：
+
+```text
+启动 OpenClaw 智能体工作室.command
+```
+
+旧入口仍然保留兼容：
 
 ```text
 启动 OpenClaw 会话工具.command
@@ -128,6 +150,7 @@ python3 openclaw_session_viewer.py
 ```text
 .
 ├── openclaw_session_viewer.py
+├── 启动 OpenClaw 智能体工作室.command
 ├── 启动 OpenClaw 会话工具.command
 ├── 启动 手机远程访问.command
 ├── 停止 手机远程访问.command
@@ -138,6 +161,7 @@ python3 openclaw_session_viewer.py
 ├── SECURITY.md
 └── docs/
     ├── OPEN_SOURCE_CHECKLIST.md
+    ├── PRODUCT_OVERVIEW.zh-CN.md
     ├── SETUP_DOCTOR.md
     └── UPGRADE_GUARD.md
 ```

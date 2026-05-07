@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.3"
+STUDIO_VERSION = "0.1.4"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -2266,7 +2266,7 @@ HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenClaw Session Viewer</title>
+  <title>OpenClaw 智能体工作室</title>
   <style>
     :root {
       color-scheme: light;
@@ -2574,7 +2574,7 @@ HTML = r"""<!doctype html>
     <h2>输入访问码</h2>
     <p>手机远程访问需要访问码。本机直接打开 127.0.0.1 不需要输入。</p>
     <input id="authToken" class="authInput" type="password" autocomplete="current-password" placeholder="访问码">
-    <button id="authLogin" type="button">进入会话工具</button>
+    <button id="authLogin" type="button">进入智能体工作室</button>
     <div id="authError" class="authError"></div>
   </div>
 </div>
@@ -2582,8 +2582,8 @@ HTML = r"""<!doctype html>
   <aside>
     <header class="sideHeader">
       <div class="sideTitle">
-        <h1>OpenClaw Sessions</h1>
-        <div class="sub">优先看 codex-agent / openclaw-weixin / direct</div>
+        <h1>OpenClaw 智能体工作室</h1>
+        <div class="sub">Codex · OpenClaw · 个人微信 · 企业微信 · 多 agent 协作</div>
         <div class="modeSwitch">
           <button id="sessionsMode" class="modeBtn active">会话</button>
           <button id="blackholeMode" class="modeBtn">黑洞</button>
@@ -2722,7 +2722,7 @@ HTML = r"""<!doctype html>
       hideAuth();
       return true;
     } catch (error) {
-      showAuth("无法检查访问状态，请确认会话工具正在运行。");
+      showAuth("无法检查访问状态，请确认智能体工作室正在运行。");
       return false;
     }
   }
@@ -2752,7 +2752,7 @@ HTML = r"""<!doctype html>
       $("authError").textContent = "验证失败，请稍后重试。";
     } finally {
       $("authLogin").disabled = false;
-      $("authLogin").textContent = "进入会话工具";
+      $("authLogin").textContent = "进入智能体工作室";
     }
   }
   const blackholeAgents = [
@@ -4424,13 +4424,13 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 if __name__ == "__main__":
     try:
-        print(f"OpenClaw Session Viewer running at http://{HOST}:{PORT}")
+        print(f"OpenClaw Agents Studio running at http://{HOST}:{PORT}")
         threading.Thread(target=auto_handover_loop, daemon=True).start()
         threading.Thread(target=event_watch_loop, daemon=True).start()
         QuietThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     except OSError as exc:
         if exc.errno == 48:
-            print(f"端口 {PORT} 已经被占用，通常表示 OpenClaw 会话工具已经在运行。")
+            print(f"端口 {PORT} 已经被占用，通常表示 OpenClaw 智能体工作室已经在运行。")
             print(f"请直接打开：http://{HOST}:{PORT}")
         else:
             raise

@@ -2,9 +2,9 @@
 SCRIPT_DIR="${0:A:h}"
 REMOTE_SCRIPT="$SCRIPT_DIR/启动 手机远程访问.command"
 
-echo "OpenClaw 会话工具一键启动中..."
+echo "OpenClaw 智能体工作室一键启动中..."
 echo "这会同时启动："
-echo "- 本机 OpenClaw 会话工具"
+echo "- 本机 OpenClaw 智能体工作室"
 echo "- 手机远程访问 Cloudflare 临时隧道"
 echo ""
 

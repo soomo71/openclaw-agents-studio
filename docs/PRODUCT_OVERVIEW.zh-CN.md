@@ -24,6 +24,8 @@ OpenClaw 智能体工作室（OpenClaw Agents Studio）是一个本地优先的 
 
 这些名称是 UI 展示层，底层仍使用稳定的 OpenClaw agent ID，例如 `codex-agent`、`life-agent`、`memory-agent` 等，避免改名影响路由和历史。
 
+黑洞任务不是一次性对话。任务创建后，可以在当前任务里继续追加指令；不带 `@` 时默认发给当前参与 agent，带 `@守护者`、`@研究员`、`@CEO`、`@all` 时只调度对应 agent。追加指令会写回任务 Markdown，并保留每个 agent 的历史轮次。
+
 ## 频道与模型
 
 - 个人微信通道：`openclaw-weixin`，当前建议绑定到 `codex-agent`。

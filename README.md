@@ -26,7 +26,7 @@ For a fuller Chinese product overview, see [docs/PRODUCT_OVERVIEW.zh-CN.md](docs
 - Session detail view with message sending, attachments, TUI launch, search, handoff notes, and archiving.
 - Optional mobile access through Cloudflare Quick Tunnel protected by a generated 6 digit access code.
 - Mobile remote startup notifications to the latest direct personal WeChat and WeCom sessions when those channels exist locally.
-- Blackhole collaboration mode: run several OpenClaw agents in separate sessions and aggregate their progress in one task view.
+- Blackhole collaboration mode: run several OpenClaw agents in separate sessions, aggregate their progress in one task view, and continue an existing task with follow-up instructions.
 - Multi-perspective agent roles such as CEO, Guardian, Researcher, Assistant, and Archivist.
 - Pixel studio status layer: tiny workstation characters show whether an agent is called, running, done, skipped, or idle without replacing the functional text cards.
 - Archive-first cleanup flow for sessions and blackhole tasks.
@@ -124,6 +124,16 @@ Default display order:
 Display names are UI labels only. Keep stable OpenClaw agent IDs underneath so routing, sessions, and histories remain predictable.
 
 If your agents use OpenAI models, prefer the subscription-based authentication flow when available. Configure a fallback model such as DeepSeek so a temporary OpenAI model/auth issue does not stop every agent.
+
+After a blackhole task is created, the bottom composer continues the current task instead of creating a new one. Mention one or more agents to target the follow-up:
+
+```text
+@守护者 @研究员 re-check risks and sources
+@CEO wrap this into a final recommendation
+@all add one short note each
+```
+
+Follow-up instructions are written back to the task file, and each agent keeps a short round history so previous replies are not overwritten.
 
 ## Setup Doctor
 

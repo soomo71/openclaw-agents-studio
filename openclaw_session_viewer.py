@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.5"
+STUDIO_VERSION = "0.1.6"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -1369,8 +1369,109 @@ def blackhole_agent_role(agent_id):
     return item.get("role") if item else agent_id
 
 
+def blackhole_agent_aliases():
+    aliases = {}
+    for agent in BLACKHOLE_AGENT_DEFS:
+        agent_id = agent["id"]
+        label = agent["label"]
+        role = agent.get("role") or ""
+        aliases[agent_id.lower()] = agent_id
+        aliases[label.lower()] = agent_id
+        if role:
+            aliases[role.lower()] = agent_id
+    aliases.update({
+        "all": "*",
+        "全部": "*",
+        "所有": "*",
+        "大家": "*",
+        "全员": "*",
+        "ceo": "executor-agent",
+        "执行者": "executor-agent",
+        "执行": "executor-agent",
+        "guardian": "guardian-agent",
+        "守护": "guardian-agent",
+        "研究": "researcher-agent",
+        "researcher": "researcher-agent",
+        "助理": "life-agent",
+        "生活": "life-agent",
+        "生活助理": "life-agent",
+        "assistant": "life-agent",
+        "档案": "memory-agent",
+        "档案师": "memory-agent",
+        "记录": "memory-agent",
+        "记录者": "memory-agent",
+        "memory": "memory-agent",
+    })
+    return aliases
+
+
+BLACKHOLE_AGENT_ALIASES = blackhole_agent_aliases()
+
+
 def blackhole_now_ms():
     return int(time.time() * 1000)
+
+
+def blackhole_known_agent(agent_id):
+    return any(item["id"] == agent_id for item in BLACKHOLE_AGENT_DEFS)
+
+
+def parse_blackhole_targets(text, fallback_agents):
+    aliases = BLACKHOLE_AGENT_ALIASES
+    mentions = re.findall(r"@([A-Za-z0-9_.:-]+|[\u4e00-\u9fff]+)", text or "")
+    targets = []
+    has_all = False
+    for raw in mentions:
+        key = raw.strip().lower()
+        agent_id = aliases.get(key)
+        if agent_id == "*":
+            has_all = True
+            continue
+        if agent_id and agent_id not in targets:
+            targets.append(agent_id)
+    if has_all:
+        return [agent["id"] for agent in BLACKHOLE_AGENT_DEFS], mentions
+    if targets:
+        return targets, mentions
+    return [agent for agent in fallback_agents if blackhole_known_agent(agent)], mentions
+
+
+def ensure_blackhole_agent_session(task, agent_id):
+    if not blackhole_known_agent(agent_id):
+        return
+    if agent_id not in task.setdefault("agents", []):
+        task["agents"].append(agent_id)
+    session_info = task.setdefault("sessions", {}).get(agent_id) or {}
+    session_id = session_info.get("sessionId") or str(uuid.uuid4())
+    task["sessions"][agent_id] = {
+        "sessionId": session_id,
+        "key": task_session_key(agent_id, session_id),
+    }
+
+
+def archive_blackhole_agent_result(result, instruction_id=""):
+    if not result:
+        return
+    if not (result.get("text") or result.get("error") or result.get("status") in BLACKHOLE_TERMINAL_STATUSES):
+        return
+    history = result.setdefault("history", [])
+    snapshot = {
+        "instructionId": result.get("instructionId") or instruction_id,
+        "instructionText": result.get("instructionText") or "",
+        "status": result.get("status") or "",
+        "text": result.get("text") or "",
+        "error": result.get("error") or "",
+        "seconds": result.get("seconds"),
+        "updatedAt": result.get("updatedAt") or blackhole_now_ms(),
+        "fallbackModel": result.get("fallbackModel") or "",
+    }
+    if not any(item.get("updatedAt") == snapshot["updatedAt"] and item.get("text") == snapshot["text"] for item in history):
+        history.append(snapshot)
+
+
+def last_blackhole_instruction(task):
+    instructions = task.get("instructions") or []
+    return instructions[-1] if instructions else None
 
 
 def parse_blackhole_time_ms(value):
@@ -1395,9 +1496,28 @@ def parse_blackhole_task_markdown(path):
     agents_text = (re.search(r"- 参与 agent: ([^\n]+)", text) or [None, ""])[1]
     agents = [item.strip() for item in agents_text.split(",") if item.strip()]
     prompt = ""
-    prompt_match = re.search(r"## 用户任务\s*(.*?)\s*## Agent Sessions", text, re.DOTALL)
+    prompt_match = re.search(r"## 用户任务\s*(.*?)\s*## (?:追加指令|Agent Sessions)", text, re.DOTALL)
     if prompt_match:
         prompt = prompt_match.group(1).strip()
+    instructions = []
+    instructions_match = re.search(r"## 追加指令\s*(.*?)\s*## Agent Sessions", text, re.DOTALL)
+    if instructions_match:
+        for index, block in enumerate(re.finditer(r"### 第 \d+ 轮追加 `([^`]+)`\s*(.*?)(?=\n### 第 \d+ 轮追加 `|\Z)", instructions_match.group(1), re.DOTALL), start=1):
+            instruction_id = block.group(1) or str(uuid.uuid4())
+            body = block.group(2)
+            created_at = parse_blackhole_time_ms((re.search(r"- 时间: ([^\n]+)", body) or [None, ""])[1])
+            agents_text = (re.search(r"- 目标 agent: ([^\n]+)", body) or [None, ""])[1]
+            target_agents = [item.strip() for item in agents_text.split(",") if item.strip() and item.strip() != "-"]
+            text_match = re.search(r"- 目标 agent: [^\n]+\s*(.*)", body, re.DOTALL)
+            instruction_text = (text_match.group(1) if text_match else "").strip()
+            if instruction_text:
+                instructions.append({
+                    "id": instruction_id,
+                    "text": instruction_text,
+                    "agents": target_agents,
+                    "mentions": [],
+                    "createdAt": created_at or int(path.stat().st_mtime * 1000) + index,
+                })
     sessions = {}
     results = {}
     for block in re.finditer(r"### .*? `([^`]+)`\s*(.*?)(?=\n### |\n## 协作说明|\Z)", text, re.DOTALL):
@@ -1423,6 +1543,7 @@ def parse_blackhole_task_markdown(path):
         "updatedAt": updated or int(path.stat().st_mtime * 1000),
         "sessions": sessions,
         "results": results,
+        "instructions": instructions,
         "path": str(path),
     }
 
@@ -1601,6 +1722,8 @@ def reconcile_blackhole_task(task):
         result = results.setdefault(agent_id, {})
         if result.get("status") in ("done", "error"):
             continue
+        if result.get("awaitingRun"):
+            continue
         text = completed_blackhole_text_from_messages(read_task_agent_messages(task, agent_id, limit=20))
         if not text:
             continue
@@ -1639,6 +1762,9 @@ def blackhole_task_public(task, include_messages=False):
     public = dict(task)
     public["agentDefs"] = BLACKHOLE_AGENT_DEFS
     public["defaultAgents"] = BLACKHOLE_DEFAULT_AGENTS
+    instruction = last_blackhole_instruction(task) or {}
+    public["lastInstructionText"] = instruction.get("text") or task.get("prompt") or ""
+    public["lastInstructionAgents"] = instruction.get("agents") or task.get("agents") or []
     if include_messages:
         messages = {}
         for agent_id in task.get("agents", []):
@@ -1664,9 +1790,28 @@ def write_blackhole_task_markdown(task):
         "",
         task.get("prompt") or "",
         "",
+        "## 追加指令",
+        "",
+    ]
+    instructions = task.get("instructions") or []
+    if instructions:
+        for index, instruction in enumerate(instructions, start=1):
+            lines.extend([
+                f"### 第 {index} 轮追加 `{instruction.get('id') or '-'}`",
+                "",
+                f"- 时间: {fmt_time(instruction.get('createdAt'))}",
+                f"- 目标 agent: {', '.join(instruction.get('agents') or []) or '-'}",
+                "",
+                instruction.get("text") or "",
+                "",
+            ])
+    else:
+        lines.extend(["暂无追加指令。", ""])
+    lines.extend([
         "## Agent Sessions",
         "",
     ]
+    )
     for agent_id in task.get("agents", []):
         session_info = (task.get("sessions") or {}).get(agent_id) or {}
         session_id = session_info.get("sessionId") or "-"
@@ -1684,6 +1829,21 @@ def write_blackhole_task_markdown(task):
             (result.get("text") or "尚未运行。"),
             "",
         ])
+        history = result.get("history") or []
+        if history:
+            lines.extend([
+                "#### 历史轮次",
+                "",
+            ])
+            for item in history[-8:]:
+                title = item.get("instructionText") or "初始任务"
+                body = item.get("error") or item.get("text") or ""
+                lines.extend([
+                    f"- {fmt_time(item.get('updatedAt'))} · `{item.get('status') or '-'}` · {title[:80]}",
+                    "",
+                    body,
+                    "",
+                ])
     lines.extend([
         "## 协作说明",
         "",
@@ -1816,11 +1976,94 @@ def create_blackhole_task(title, prompt, agents):
     return blackhole_task_public(task, include_messages=True)
 
 
+def prepare_blackhole_agent_instruction(task, agent_id, instruction):
+    ensure_blackhole_agent_session(task, agent_id)
+    result = task.setdefault("results", {}).setdefault(agent_id, {})
+    if result.get("status") == "running":
+        result["queuedInstructionId"] = instruction["id"]
+        result["queuedInstructionText"] = instruction["text"]
+        result["queuedAt"] = instruction["createdAt"]
+        return
+    archive_blackhole_agent_result(result, instruction.get("id") or "")
+    history = result.get("history") or []
+    result.clear()
+    result.update({
+        "status": "pending",
+        "text": "",
+        "error": "",
+        "updatedAt": instruction["createdAt"],
+        "instructionId": instruction["id"],
+        "instructionText": instruction["text"],
+        "awaitingRun": True,
+        "history": history,
+    })
+
+
+def activate_queued_blackhole_instruction(task, agent_id):
+    result = task.setdefault("results", {}).setdefault(agent_id, {})
+    queued_id = result.get("queuedInstructionId")
+    queued_text = result.get("queuedInstructionText")
+    if not queued_id or not queued_text:
+        return False
+    queued_at = result.get("queuedAt") or blackhole_now_ms()
+    archive_blackhole_agent_result(result, queued_id)
+    history = result.get("history") or []
+    result.clear()
+    result.update({
+        "status": "pending",
+        "text": "",
+        "error": "",
+        "updatedAt": queued_at,
+        "instructionId": queued_id,
+        "instructionText": queued_text,
+        "awaitingRun": True,
+        "history": history,
+    })
+    task["status"] = "running"
+    task["updatedAt"] = blackhole_now_ms()
+    return True
+
+
+def continue_blackhole_task(task_id, text):
+    task = next((item for item in load_blackhole_tasks() if item.get("id") == task_id), None)
+    if not task:
+        return {"ok": False, "error": "task not found"}
+    if task.get("status") == "cancelled":
+        return {"ok": False, "error": "任务已手动结束，不能继续追加。可以新建一个黑洞任务。"}
+    targets, mentions = parse_blackhole_targets(text, task.get("agents") or BLACKHOLE_DEFAULT_AGENTS)
+    targets = [agent_id for agent_id in targets if blackhole_known_agent(agent_id)]
+    if not targets:
+        return {"ok": False, "error": "没有识别到可调度的 agent"}
+    now = blackhole_now_ms()
+    instruction = {
+        "id": str(uuid.uuid4()),
+        "text": text.strip(),
+        "agents": targets,
+        "mentions": mentions,
+        "createdAt": now,
+    }
+    task.setdefault("instructions", []).append(instruction)
+    for agent_id in targets:
+        prepare_blackhole_agent_instruction(task, agent_id, instruction)
+    task["status"] = "running"
+    task["updatedAt"] = now
+    update_blackhole_task(task)
+    schedule_blackhole_worker(task_id)
+    return {"ok": True, "task": blackhole_task_public(task, include_messages=True), "instruction": instruction}
+
+
 def blackhole_agent_prompt(task, agent_id):
     role = blackhole_agent_role(agent_id)
     label = blackhole_agent_label(agent_id)
     shared_dir = str(BLACKHOLE_SHARED_DIR)
     task_path = task.get("path") or str(blackhole_task_path(task))
+    result = ((task.get("results") or {}).get(agent_id) or {})
+    instruction_text = result.get("instructionText") or ""
+    history = result.get("history") or []
+    recent_history = "\n\n".join([
+        f"- {fmt_time(item.get('updatedAt'))} · {item.get('status') or '-'} · {(item.get('instructionText') or '初始任务')[:80]}\n{(item.get('error') or item.get('text') or '')[:1200]}"
+        for item in history[-3:]
+    ])
     role_guidance = {
         "executor": "你是执行者。请给出可执行步骤、需要用户确认的动作、执行顺序和风险前置条件。不要直接承诺已执行，除非你真的执行了。",
         "guardian": "你是守护者。请从风险、权限、隐私、安全、成本、误操作、外部发送边界检查这个任务。",
@@ -1839,6 +2082,12 @@ def blackhole_agent_prompt(task, agent_id):
         "",
         "用户原始任务：",
         task.get("prompt") or "",
+        "",
+        "用户追加指令：",
+        instruction_text or "无。本轮请处理用户原始任务。",
+        "",
+        "你此前的历史轮次摘要：",
+        recent_history or "暂无。",
         "",
         "你的本轮要求：",
         role_guidance.get(role, "请从你的角色角度给出清晰、可执行、可复核的意见。"),
@@ -1868,9 +2117,13 @@ def run_blackhole_agent(task_id, agent_id):
         "key": task_session_key(agent_id, session_id),
     })
     result_info = task.setdefault("results", {}).setdefault(agent_id, {})
+    if result_info.get("status") in BLACKHOLE_TERMINAL_STATUSES and result_info.get("queuedInstructionId"):
+        activate_queued_blackhole_instruction(task, agent_id)
+        update_blackhole_task(task)
+        result_info = task.setdefault("results", {}).setdefault(agent_id, {})
     if result_info.get("status") in BLACKHOLE_TERMINAL_STATUSES:
         return {"ok": True, "task": blackhole_task_public(task, include_messages=True), "result": result_info}
-    result_info.update({"status": "running", "updatedAt": blackhole_now_ms(), "error": ""})
+    result_info.update({"status": "running", "updatedAt": blackhole_now_ms(), "error": "", "awaitingRun": False})
     task["status"] = "running"
     update_blackhole_task(task)
     session = {
@@ -1931,10 +2184,13 @@ def run_blackhole_agent(task_id, agent_id):
             "updatedAt": blackhole_now_ms(),
             "error": result.get("error") or result.get("raw") or "运行失败",
         })
+    has_queued = activate_queued_blackhole_instruction(task, agent_id)
     all_results = task.get("results") or {}
     if all((all_results.get(agent_id) or {}).get("status") in BLACKHOLE_TERMINAL_STATUSES for agent_id in task.get("agents", [])):
         task["status"] = "done"
     update_blackhole_task(task)
+    if has_queued:
+        schedule_blackhole_worker(task_id)
     EVENT_HUB.publish("messages", {"keys": [task_session_key(agent_id, session_id)]})
     EVENT_HUB.publish("sessions", {})
     return {"ok": result.get("ok"), "task": blackhole_task_public(task, include_messages=True), "result": result_info}
@@ -2494,6 +2750,10 @@ HTML = r"""<!doctype html>
     .agentStatus.error { color: var(--error); }
     .agentStatus.running { color: var(--orange); }
     .agentText { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; color: var(--charcoal); }
+    .agentHistory { margin-top: 10px; border-top: 1px solid var(--hairline-soft); padding-top: 8px; color: var(--steel); font-size: 12px; }
+    .agentHistory summary { cursor: pointer; font-weight: 700; }
+    .agentHistoryList { display: grid; gap: 8px; margin-top: 8px; }
+    .agentHistoryItem { border: 1px solid var(--hairline-soft); border-radius: 10px; background: var(--surface-soft); padding: 9px; }
     .archiveList { display: grid; gap: 10px; }
     .archiveItem { border: 1px solid var(--hairline); border-radius: 12px; background: var(--canvas); padding: 12px; }
     .archiveItemHeader { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
@@ -3107,6 +3367,8 @@ HTML = r"""<!doctype html>
     return {
       created: "已创建",
       running: "运行中",
+      continued: "继续中",
+      waiting: "待追加",
       done: "已完成",
       error: "有错误",
       skipped: "已跳过",
@@ -3182,6 +3444,16 @@ HTML = r"""<!doctype html>
       </div>`;
   }
 
+  function blackholeInstructionPreview(task) {
+    return task.lastInstructionText || task.prompt || "等待任务描述";
+  }
+
+  function blackholeInstructionTargets(instruction) {
+    const agents = (instruction && instruction.agents) || [];
+    if (!agents.length) return "全部参与 agent";
+    return agents.map(blackholeAgentLabel).join("、");
+  }
+
   function selectedBlackholeAgents() {
     const checked = blackholeAgentOrder.filter(agentId => blackholeSelectedAgents.has(agentId));
     return checked.length ? checked : defaultBlackholeAgents.slice();
@@ -3218,7 +3490,7 @@ HTML = r"""<!doctype html>
         </div>
         <div class="meta">
           <span class="badge">黑洞协作</span><span class="badge">${esc(blackholeStatusText(task.status))}</span>
-          <div class="preview" title="${esc(task.prompt || "")}">${esc(task.prompt || "等待任务描述")}</div>
+          <div class="preview" title="${esc(blackholeInstructionPreview(task))}">${esc(blackholeInstructionPreview(task))}</div>
           <div class="metaLine">${esc((task.agents || []).map(blackholeAgentLabel).join("、") || "-")}</div>
           <div class="metaLine">${esc(task.updatedAt ? new Date(task.updatedAt).toLocaleString() : "-")}</div>
         </div>
@@ -3232,6 +3504,7 @@ HTML = r"""<!doctype html>
     $("searchBox").value = "";
     $("searchCount").textContent = "0/0";
     if (!currentTask) {
+      $("message").placeholder = "描述要让多个 agent 协作处理的问题...";
       $("sessionTitle").textContent = "黑洞协作";
       setHeaderMeta("输入任务后会创建独立协作窗口。", "输入任务后会创建独立协作窗口，并为每个 agent 建立独立 session。");
       $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
@@ -3244,6 +3517,7 @@ HTML = r"""<!doctype html>
         </div>`;
       return;
     }
+    $("message").placeholder = "向当前黑洞追加指令，可用 @CEO @守护者 @研究员 @小助理 @档案师 点名...";
     $("sessionTitle").textContent = `黑洞协作 · ${currentTask.title}`;
     setHeaderMeta(
       `${blackholeStatusText(currentTask.status)} · ${esc(currentTask.id).slice(0, 8)} · ${currentTask.updatedAt ? new Date(currentTask.updatedAt).toLocaleString() : "-"}`,
@@ -3252,11 +3526,29 @@ HTML = r"""<!doctype html>
     $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot show";
     $("blackholeWorkshopSlot").innerHTML = renderBlackholeWorkshop(currentTask);
     const messages = currentTask.messages || {};
+    const instructions = currentTask.instructions || [];
+    const instructionCards = instructions.map((instruction, index) => `
+      <div class="msg system compact">
+        <div class="role">追加指令 ${index + 1} · ${esc(blackholeInstructionTargets(instruction))}</div>
+        <div class="messageText">${esc(instruction.text || "")}</div>
+      </div>`).join("");
     const cards = (currentTask.agents || []).map(agentId => {
       const result = (currentTask.results || {})[agentId] || {};
       const agentMessages = messages[agentId] || [];
       const lastAssistant = [...agentMessages].reverse().find(m => m.role === "assistant");
       const text = result.error || result.text || (lastAssistant && lastAssistant.text) || "等待运行。";
+      const history = result.history || [];
+      const historyHtml = history.length ? `
+        <details class="agentHistory">
+          <summary>历史轮次 ${history.length}</summary>
+          <div class="agentHistoryList">
+            ${history.slice(-5).map((item, index) => `
+              <div class="agentHistoryItem">
+                <div class="agentStatus">${esc(item.instructionText || "初始任务")} · ${esc(blackholeStatusText(item.status))}</div>
+                <div class="agentText">${highlightedText(item.error || item.text || "")}</div>
+              </div>`).join("")}
+          </div>
+        </details>` : "";
       const session = (currentTask.sessions || {})[agentId] || {};
       const key = session.key || (session.sessionId ? `agent:${agentId}:explicit:${session.sessionId}` : "");
       const status = result.status || "pending";
@@ -3275,6 +3567,7 @@ HTML = r"""<!doctype html>
             <div class="archiveActions">${controls}</div>
           </div>
           <div class="agentText">${highlightedText(text)}</div>
+          ${historyHtml}
         </div>`;
     }).join("");
     $("messages").innerHTML = `
@@ -3283,6 +3576,7 @@ HTML = r"""<!doctype html>
           <div class="role">task</div>
           <div class="messageText">${esc(currentTask.prompt || "")}</div>
         </div>
+        ${instructionCards}
         ${cards || '<div class="empty">这个黑洞任务还没有 agent。</div>'}
       </div>`;
     scrollMessagesToBottom();
@@ -3317,6 +3611,35 @@ HTML = r"""<!doctype html>
       setSyncStatus("黑洞协作：已启动，各 agent 会陆续写回结果。");
     } catch (error) {
       const message = `黑洞协作：创建或启动失败：${error}`;
+      setSyncStatus(message);
+      alert(message);
+    } finally {
+      $("sendBtn").disabled = false;
+      $("sendBtn").textContent = "↗";
+    }
+  }
+
+  async function continueCurrentBlackholeTask(message) {
+    if (!currentTask) return createAndRunBlackholeTask(message);
+    $("sendBtn").disabled = true;
+    $("sendBtn").textContent = "...";
+    try {
+      setSyncStatus("黑洞协作：正在追加指令...");
+      const response = await fetch("/api/blackhole/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: currentTask.id, prompt: message }),
+      });
+      const result = await response.json();
+      if (!result.ok) return alert(result.error || "追加指令失败");
+      currentTask = result.task;
+      $("message").value = "";
+      renderBlackholeTask();
+      await loadBlackholeTasks({ silent: true });
+      const targets = (result.instruction && result.instruction.agents || []).map(blackholeAgentLabel).join("、") || "当前参与 agent";
+      setSyncStatus(`黑洞协作：已追加指令，调度 ${targets}。`);
+    } catch (error) {
+      const message = `黑洞协作：追加指令失败：${error}`;
       setSyncStatus(message);
       alert(message);
     } finally {
@@ -3813,6 +4136,7 @@ HTML = r"""<!doctype html>
   $("newBlackhole").onclick = () => {
     setMode("blackhole");
     currentTask = null;
+    $("message").value = "";
     renderBlackholeTask();
     $("message").focus();
   };
@@ -4054,7 +4378,7 @@ HTML = r"""<!doctype html>
     if (viewMode === "blackhole") {
       const message = $("message").value.trim();
       if (!message) return alert("先输入要协作处理的问题");
-      await createAndRunBlackholeTask(message);
+      await continueCurrentBlackholeTask(message);
       return;
     }
     if (!current) return alert("先选一个 session");
@@ -4364,6 +4688,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/session/restore",
             "/api/session/delete-archived",
             "/api/blackhole/create",
+            "/api/blackhole/continue",
             "/api/blackhole/run",
             "/api/blackhole/agent-status",
             "/api/blackhole/cancel",
@@ -4422,6 +4747,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             task = create_blackhole_task(data.get("title") or "", prompt.strip(), data.get("agents") or [])
             self.send_json({"ok": True, "task": task})
+            return
+        if self.path == "/api/blackhole/continue":
+            prompt = data.get("prompt") or data.get("message") or ""
+            if not prompt.strip():
+                self.send_json({"ok": False, "error": "empty blackhole instruction"}, status=400)
+                return
+            self.send_json(continue_blackhole_task(data.get("id") or "", prompt.strip()))
             return
         if self.path == "/api/blackhole/run":
             task_id = data.get("id") or ""

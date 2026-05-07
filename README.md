@@ -27,7 +27,7 @@ For a fuller Chinese product overview, see [docs/PRODUCT_OVERVIEW.zh-CN.md](docs
 - Optional mobile access through Cloudflare Quick Tunnel protected by a generated 6 digit access code.
 - Mobile remote startup notifications to the latest direct personal WeChat and WeCom sessions when those channels exist locally.
 - Blackhole collaboration mode: run several OpenClaw agents in separate sessions, aggregate their progress in one task view, and continue an existing task with follow-up instructions.
-- Multi-perspective agent roles such as CEO, Guardian, Researcher, Assistant, and Archivist.
+- Multi-perspective agent roles such as Codex, CEO, Guardian, Researcher, Assistant, and Archivist.
 - Pixel studio status layer: tiny workstation characters show whether an agent is called, running, done, skipped, or idle without replacing the functional text cards.
 - Archive-first cleanup flow for sessions and blackhole tasks.
 - Upgrade Guard: pre-upgrade checks and local private backups for OpenClaw config, agents, extensions, and plugin snapshots.
@@ -115,11 +115,12 @@ python3 openclaw_session_viewer.py
 
 Default display order:
 
-1. CEO
-2. Guardian
-3. Researcher
-4. Assistant
-5. Archivist
+1. Codex
+2. CEO
+3. Guardian
+4. Researcher
+5. Assistant
+6. Archivist
 
 Display names are UI labels only. Keep stable OpenClaw agent IDs underneath so routing, sessions, and histories remain predictable.
 
@@ -129,6 +130,7 @@ After a blackhole task is created, the bottom composer continues the current tas
 
 ```text
 @守护者 @研究员 re-check risks and sources
+@Codex synthesize the team and close the loop
 @CEO wrap this into a final recommendation
 @all add one short note each
 ```

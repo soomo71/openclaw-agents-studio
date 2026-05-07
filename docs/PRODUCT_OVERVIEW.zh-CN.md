@@ -16,6 +16,7 @@ OpenClaw 智能体工作室（OpenClaw Agents Studio）是一个本地优先的 
 
 黑洞协作模式会为每个参与 agent 使用独立 session，并在一个任务面板里聚合展示。默认角色包括：
 
+- Codex：偏总协调、关键路径、收口整合。
 - CEO：偏执行、决策、拆解任务。
 - 守护者：偏审查、风险、边界、可靠性。
 - 研究员：偏资料、背景、方案比较。
@@ -24,7 +25,7 @@ OpenClaw 智能体工作室（OpenClaw Agents Studio）是一个本地优先的 
 
 这些名称是 UI 展示层，底层仍使用稳定的 OpenClaw agent ID，例如 `codex-agent`、`life-agent`、`memory-agent` 等，避免改名影响路由和历史。
 
-黑洞任务不是一次性对话。任务创建后，可以在当前任务里继续追加指令；不带 `@` 时默认发给当前参与 agent，带 `@守护者`、`@研究员`、`@CEO`、`@all` 时只调度对应 agent。追加指令会写回任务 Markdown，并保留每个 agent 的历史轮次。
+黑洞任务不是一次性对话。任务创建后，可以在当前任务里继续追加指令；不带 `@` 时默认发给当前参与 agent，带 `@Codex`、`@守护者`、`@研究员`、`@CEO`、`@all` 时只调度对应 agent。追加指令会写回任务 Markdown，并保留每个 agent 的历史轮次。
 
 ## 频道与模型
 

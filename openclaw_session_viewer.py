@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.6"
+STUDIO_VERSION = "0.1.7"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -68,13 +68,14 @@ EXTRA_PATHS = [
 ]
 os.environ["PATH"] = ":".join([path for path in EXTRA_PATHS if path]) + ":" + os.environ.get("PATH", "")
 BLACKHOLE_AGENT_DEFS = [
+    {"id": "codex-agent", "label": "Codex", "role": "codex"},
     {"id": "executor-agent", "label": "CEO", "role": "executor"},
     {"id": "guardian-agent", "label": "守护者", "role": "guardian"},
     {"id": "researcher-agent", "label": "研究员", "role": "researcher"},
     {"id": "life-agent", "label": "小助理", "role": "life"},
     {"id": "memory-agent", "label": "档案师", "role": "memory"},
 ]
-BLACKHOLE_DEFAULT_AGENTS = ["guardian-agent", "memory-agent", "researcher-agent"]
+BLACKHOLE_DEFAULT_AGENTS = ["codex-agent", "guardian-agent", "memory-agent", "researcher-agent"]
 BLACKHOLE_REQUIRED_FALLBACK_MODEL = "deepseek/deepseek-v4-flash"
 BLACKHOLE_FALLBACK_AGENT_ID = "main"
 BLACKHOLE_TERMINAL_STATUSES = {"done", "error", "skipped", "cancelled"}
@@ -1386,6 +1387,10 @@ def blackhole_agent_aliases():
         "大家": "*",
         "全员": "*",
         "ceo": "executor-agent",
+        "codex": "codex-agent",
+        "主脑": "codex-agent",
+        "总协调": "codex-agent",
+        "协调者": "codex-agent",
         "执行者": "executor-agent",
         "执行": "executor-agent",
         "guardian": "guardian-agent",
@@ -2065,6 +2070,7 @@ def blackhole_agent_prompt(task, agent_id):
         for item in history[-3:]
     ])
     role_guidance = {
+        "codex": "你是 Codex。请作为总协调视角整合任务目标、拆解关键路径、指出需要其他 agent 补充的点，并在必要时给出收口建议。",
         "executor": "你是执行者。请给出可执行步骤、需要用户确认的动作、执行顺序和风险前置条件。不要直接承诺已执行，除非你真的执行了。",
         "guardian": "你是守护者。请从风险、权限、隐私、安全、成本、误操作、外部发送边界检查这个任务。",
         "memory": "你是记录者。请提炼任务背景、应记录到 Obsidian 的事项、接力摘要和后续归档结构。",
@@ -2687,7 +2693,7 @@ HTML = r"""<!doctype html>
     .workshopPanel { border: 1px solid var(--hairline); border-radius: 10px; background: linear-gradient(180deg, #fbfaf8 0%, #f4f1ec 100%); padding: 5px; box-shadow: inset 0 1px 0 rgba(255,255,255,.9); }
     .workshopHeader { display: none; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 7px; color: var(--steel); font-size: 11px; }
     .workshopTitle { font-weight: 700; color: var(--charcoal); }
-    .workshopGrid { display: grid; grid-template-columns: repeat(5, minmax(62px, 1fr)); gap: 5px; min-width: 0; }
+    .workshopGrid { display: grid; grid-template-columns: repeat(6, minmax(58px, 1fr)); gap: 5px; min-width: 0; }
     .workstation { position: relative; min-width: 0; min-height: 50px; border: 1px solid var(--hairline-strong); border-radius: 7px; background: #f7f6f3; overflow: hidden; padding: 4px; box-shadow: 0 1px 2px rgba(10,21,48,.025); filter: grayscale(1) saturate(.15); transition: filter .16s ease, background .16s ease, box-shadow .16s ease, border-color .16s ease; }
     .workstation::before { content: ""; position: absolute; inset: auto 0 0; height: 12px; background: repeating-linear-gradient(90deg, #d9d6cf 0 5px, #ccc7bf 5px 10px); opacity: .72; }
     .workstation[data-status="running"] { filter: none; background: #fff; border-color: rgba(86,69,212,.55); box-shadow: 0 0 0 2px rgba(86,69,212,.1), 0 8px 20px rgba(86,69,212,.08); }
@@ -2710,12 +2716,15 @@ HTML = r"""<!doctype html>
     .pixelAgent { position: absolute; left: 0; bottom: 4px; width: 14px; height: 18px; image-rendering: pixelated; }
     .pixelAgent::before { content: ""; position: absolute; left: 4px; top: 0; width: 8px; height: 8px; background: #f2b48d; border: 1px solid #503226; box-shadow: 0 8px 0 1px var(--brand-navy-mid), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent::after { content: ""; position: absolute; left: 6px; top: 3px; width: 1px; height: 1px; background: #222; box-shadow: 4px 0 0 #222; }
+    .pixelAgent.codex::before { box-shadow: 0 8px 0 1px var(--purple), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent.executor::before { box-shadow: 0 8px 0 1px var(--orange), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent.guardian::before { box-shadow: 0 8px 0 1px var(--primary), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent.memory::before { box-shadow: 0 8px 0 1px var(--green), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent.researcher::before { box-shadow: 0 8px 0 1px var(--teal), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .pixelAgent.life::before { box-shadow: 0 8px 0 1px var(--pink), -3px 12px 0 -1px #503226, 12px 12px 0 -1px #503226; }
     .workProp { position: absolute; z-index: 2; }
+    .workProp.codex { right: 9px; bottom: 12px; width: 9px; height: 9px; background: var(--purple); border: 1px solid #3b247c; transform: rotate(45deg); }
+    .workProp.codex::after { content: ""; position: absolute; left: 3px; top: 3px; width: 1px; height: 1px; background: #fff; box-shadow: 2px 0 0 #fff, -2px 0 0 #fff, 0 2px 0 #fff, 0 -2px 0 #fff; }
     .workProp.executor { right: 10px; bottom: 13px; width: 7px; height: 5px; background: var(--orange); border: 1px solid #6e310b; }
     .workProp.guardian { right: 10px; bottom: 12px; width: 7px; height: 10px; background: var(--primary); border: 1px solid var(--brand-navy); border-radius: 4px 4px 5px 5px; }
     .workProp.memory { right: 9px; bottom: 12px; width: 8px; height: 7px; background: var(--mint); border: 1px solid #377b48; box-shadow: 2px 2px 0 #d9f3e1; }
@@ -2725,6 +2734,7 @@ HTML = r"""<!doctype html>
     .workProp.life::before { content: ""; position: absolute; left: 1px; right: 1px; top: 3px; height: 1px; background: #9c3a68; box-shadow: 0 3px 0 #9c3a68; }
     .workstation[data-status="running"] .pixelAgent { animation: workerBob .7s steps(2, end) infinite; }
     .workstation[data-status="running"] .desk::before { animation: screenGlow .9s infinite alternate; }
+    .workstation[data-status="running"] .workProp.codex { animation: codexSpark .7s steps(2, end) infinite; }
     .workstation[data-status="running"] .workProp.executor { animation: toolTap .45s steps(2, end) infinite; }
     .workstation[data-status="running"] .workProp.guardian { animation: shieldWatch .8s steps(2, end) infinite; }
     .workstation[data-status="running"] .workProp.memory { animation: noteStick .8s steps(2, end) infinite; }
@@ -2736,6 +2746,7 @@ HTML = r"""<!doctype html>
     @keyframes workerShake { 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
     @keyframes lampPulse { 50% { box-shadow: 0 0 0 4px rgba(86,69,212,.2); } }
     @keyframes screenGlow { from { filter: brightness(1); } to { filter: brightness(1.18); } }
+    @keyframes codexSpark { 50% { transform: rotate(45deg) scale(1.18); filter: brightness(1.16); } }
     @keyframes toolTap { 50% { transform: translateY(3px); } }
     @keyframes shieldWatch { 50% { transform: translateX(-4px); } }
     @keyframes noteStick { 50% { transform: translateY(-3px) rotate(-2deg); } }
@@ -2837,7 +2848,7 @@ HTML = r"""<!doctype html>
       .composerToolbar { gap: 5px; }
       .blackholeWorkshopSlot { padding: 5px 10px 0; }
       .workshopPanel { padding: 5px; }
-      .workshopGrid { grid-template-columns: repeat(5, minmax(62px, 1fr)); gap: 5px; }
+      .workshopGrid { grid-template-columns: repeat(6, minmax(58px, 1fr)); gap: 5px; }
       .workstation { min-height: 50px; padding: 4px; }
       .stationScene { left: 50%; right: auto; top: 12px; width: 56px; height: 24px; transform: translateX(-50%); }
       .desk { left: 15px; right: auto; width: 38px; }
@@ -2845,7 +2856,7 @@ HTML = r"""<!doctype html>
       .archiveItemHeader, .agentCardHeader { align-items: flex-start; }
     }
     @media (max-width: 390px) {
-      .workshopGrid { grid-template-columns: repeat(5, 62px); }
+      .workshopGrid { grid-template-columns: repeat(6, 58px); }
     }
   </style>
 </head>
@@ -3037,13 +3048,14 @@ HTML = r"""<!doctype html>
     }
   }
   const blackholeAgents = [
+    { id: "codex-agent", label: "Codex" },
     { id: "executor-agent", label: "CEO" },
     { id: "guardian-agent", label: "守护者" },
     { id: "researcher-agent", label: "研究员" },
     { id: "life-agent", label: "小助理" },
     { id: "memory-agent", label: "档案师" },
   ];
-  const defaultBlackholeAgents = ["guardian-agent", "memory-agent", "researcher-agent"];
+  const defaultBlackholeAgents = ["codex-agent", "guardian-agent", "memory-agent", "researcher-agent"];
   let blackholeAgentOrder = blackholeAgents.map(agent => agent.id);
   let blackholeSelectedAgents = new Set(defaultBlackholeAgents);
 
@@ -3389,6 +3401,7 @@ HTML = r"""<!doctype html>
 
   function blackholeAgentRoleClass(agentId) {
     return {
+      "codex-agent": "codex",
       "executor-agent": "executor",
       "guardian-agent": "guardian",
       "memory-agent": "memory",
@@ -3517,7 +3530,7 @@ HTML = r"""<!doctype html>
         </div>`;
       return;
     }
-    $("message").placeholder = "向当前黑洞追加指令，可用 @CEO @守护者 @研究员 @小助理 @档案师 点名...";
+    $("message").placeholder = "向当前黑洞追加指令，可用 @Codex @CEO @守护者 @研究员 @小助理 @档案师 点名...";
     $("sessionTitle").textContent = `黑洞协作 · ${currentTask.title}`;
     setHeaderMeta(
       `${blackholeStatusText(currentTask.status)} · ${esc(currentTask.id).slice(0, 8)} · ${currentTask.updatedAt ? new Date(currentTask.updatedAt).toLocaleString() : "-"}`,

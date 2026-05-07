@@ -64,7 +64,6 @@ Chinese launchers are also kept for convenience:
 
 ```text
 启动 OpenClaw 智能体工作室.command
-启动 OpenClaw 会话工具.command
 启动 手机远程访问.command
 停止 手机远程访问.command
 查看 手机远程访问.command
@@ -81,6 +80,16 @@ Then open:
 ```text
 http://127.0.0.1:8766
 ```
+
+## Updates
+
+If you installed the project with Git, double-click:
+
+```text
+Update OpenClaw Agents Studio.command
+```
+
+The updater checks for local changes first. If the working tree is clean, it fast-forwards from GitHub and restarts the local background service. If local edits are present, it stops and asks you to back up or commit them before updating.
 
 ## Configuration
 
@@ -145,7 +154,9 @@ More details: [docs/UPGRADE_GUARD.md](docs/UPGRADE_GUARD.md)
 .
 ├── openclaw_session_viewer.py
 ├── Start OpenClaw Agents Studio.command
+├── Update OpenClaw Agents Studio.command
 ├── 启动 OpenClaw 智能体工作室.command
+├── 更新 OpenClaw 智能体工作室.command
 ├── Start Mobile Remote Access.command
 ├── Stop Mobile Remote Access.command
 ├── Show Mobile Remote Access.command

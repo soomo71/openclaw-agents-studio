@@ -53,12 +53,6 @@ openclaw status
 启动 OpenClaw 智能体工作室.command
 ```
 
-旧入口仍然保留兼容：
-
-```text
-启动 OpenClaw 会话工具.command
-```
-
 它会同时启动：
 
 - 本机 Web 工具：`http://127.0.0.1:8766`
@@ -87,6 +81,16 @@ http://127.0.0.1:8766
 ```text
 查看 手机远程访问.command
 ```
+
+## 获取更新
+
+如果是从 GitHub clone 的版本，后续更新可以双击：
+
+```text
+更新 OpenClaw 智能体工作室.command
+```
+
+它会检查本地是否有未提交改动；如果目录是干净的，会从 GitHub 快进更新并重启本机后台服务。为避免误覆盖，本地有改动时会停止并提示先备份或提交。
 
 ## 配置
 
@@ -151,7 +155,7 @@ python3 openclaw_session_viewer.py
 .
 ├── openclaw_session_viewer.py
 ├── 启动 OpenClaw 智能体工作室.command
-├── 启动 OpenClaw 会话工具.command
+├── 更新 OpenClaw 智能体工作室.command
 ├── 启动 手机远程访问.command
 ├── 停止 手机远程访问.command
 ├── 查看 手机远程访问.command

@@ -73,4 +73,4 @@ OPENCLAW_REMOTE_NOTIFY=0
 英文对外名称：OpenClaw Agents Studio  
 旧称：OpenClaw 会话工具
 
-旧称可作为兼容入口保留，但新文档和 UI 应优先使用“智能体工作室”。
+旧称只作为历史备注保留；新文档、UI 和启动入口统一使用“智能体工作室”。

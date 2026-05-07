@@ -18,7 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-STUDIO_VERSION = "0.1.4"
+STUDIO_VERSION = "0.1.5"
 TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
@@ -219,6 +219,14 @@ def path_write_state(path):
 
 def setup_state():
     return read_json(SETUP_STATE_FILE) or {}
+
+
+def dismiss_health_prompt():
+    state = setup_state()
+    state["dismissedHealthVersion"] = STUDIO_VERSION
+    state["dismissedHealthAt"] = int(time.time() * 1000)
+    write_json(SETUP_STATE_FILE, state)
+    return app_health()
 
 
 def setup_doctor_report():
@@ -812,6 +820,7 @@ def app_health():
     sessions = session_stores()
     session_count = sum(len(data) for _, _, data in sessions)
     state = setup_state()
+    dismissed = state.get("dismissedHealthVersion") == STUDIO_VERSION
 
     if not state.get("setupCompleted") or state.get("lastSeenVersion") != STUDIO_VERSION:
         detail = "首次使用或升级后建议运行一次完整检查。"
@@ -914,9 +923,12 @@ def app_health():
         worst = "error"
     elif any(check["level"] == "warn" for check in checks):
         worst = "warn"
+    dismissible = worst != "error"
     return {
         "ok": worst != "error",
         "level": worst,
+        "dismissed": dismissed and dismissible,
+        "dismissible": dismissible,
         "checks": checks,
         "paths": {
             "toolDir": str(TOOL_DIR),
@@ -2358,7 +2370,7 @@ HTML = r"""<!doctype html>
     .badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--cream); color: var(--charcoal); margin: 0 4px 4px 0; font-size: 11px; border: 1px solid var(--hairline-soft); }
     .badge.green { background: var(--mint); color: #116329; border-color: #bfe7ca; }
     .badge.orange { background: var(--peach); color: #793400; border-color: #ffd1ad; }
-    .health { border-bottom: 1px solid var(--hairline); padding: 12px 18px; background: var(--cream); }
+    .health { position: relative; border-bottom: 1px solid var(--hairline); padding: 12px 48px 12px 18px; background: var(--cream); }
     .health.ok { display: none; }
     .health.warn { background: #fef7d6; }
     .health.error { background: #fff0f0; }
@@ -2369,6 +2381,8 @@ HTML = r"""<!doctype html>
     .healthLevel.ok { color: var(--green); }
     .healthLevel.warn { color: var(--orange); }
     .healthLevel.error { color: var(--error); }
+    .healthClose { position: absolute; right: 12px; top: 10px; width: 28px; height: 28px; padding: 0; border-radius: 7px; background: transparent; color: var(--steel); border: 1px solid transparent; font-size: 16px; line-height: 1; }
+    .healthClose:hover { background: rgba(255,255,255,.62); border-color: rgba(55,53,47,.1); color: var(--ink); }
     .handover { border-bottom: 1px solid var(--hairline); padding: 10px 18px; background: var(--sky); display: none; color: var(--charcoal); font-size: 12px; line-height: 1.45; }
     .handover.show { display: block; }
     .handover code { color: var(--brand-navy); overflow-wrap: anywhere; }
@@ -2376,6 +2390,12 @@ HTML = r"""<!doctype html>
     .blackholeWorkshopSlot.show { display: block; }
     .autoStatus { border-bottom: 1px solid var(--hairline); padding: 6px 18px 8px; color: var(--slate); font-size: 11px; background: var(--surface-soft); overflow-wrap: anywhere; word-break: break-word; }
     .syncStatus { color: var(--steel); font-size: 11px; margin-top: 4px; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word; }
+    .headerMeta details { display: inline-block; max-width: 100%; }
+    .headerMeta summary { cursor: pointer; list-style: none; max-width: min(860px, 70vw); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .headerMeta summary::-webkit-details-marker { display: none; }
+    .headerMeta summary::before { content: "›"; display: inline-block; margin-right: 5px; transition: transform .12s ease; color: var(--steel); }
+    .headerMeta details[open] summary::before { transform: rotate(90deg); }
+    .metaDetailsBody { margin-top: 4px; max-width: min(900px, 74vw); overflow-wrap: anywhere; word-break: break-word; color: var(--steel); }
     .topBar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-shrink: 0; }
     .toolsMenu { position: relative; }
     .toolsMenu summary { list-style: none; border-radius: 8px; background: var(--brand-navy); color: #fff; font-weight: 600; padding: 9px 10px; cursor: pointer; font-size: 18px; min-width: 42px; text-align: center; white-space: nowrap; line-height: 1; }
@@ -2539,6 +2559,7 @@ HTML = r"""<!doctype html>
       .mainHeader h1 { font-size: 15px; max-height: 2.5em; overflow: hidden; }
       .sideTitle h1 { font-size: 18px; }
       .sub, .syncStatus { font-size: 11px; }
+      .headerMeta summary, .metaDetailsBody { max-width: calc(100vw - 96px); }
       .modeSwitch { margin-top: 8px; }
       #sessions { display: flex; overflow-x: auto; overflow-y: hidden; height: calc(100% - 88px); }
       .session { min-width: min(310px, 82vw); border-right: 1px solid var(--hairline); border-bottom: 0; }
@@ -2770,6 +2791,22 @@ HTML = r"""<!doctype html>
     return String(v ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
   }
 
+  function setHeaderMeta(summary, detail = "") {
+    const box = $("sessionMeta");
+    box.className = "sub headerMeta";
+    const cleanSummary = String(summary || "-");
+    const cleanDetail = String(detail || "");
+    if (!cleanDetail || cleanDetail === cleanSummary) {
+      box.textContent = cleanSummary;
+      return;
+    }
+    box.innerHTML = `
+      <details>
+        <summary title="${esc(cleanDetail)}">${esc(cleanSummary)}</summary>
+        <div class="metaDetailsBody">${esc(cleanDetail)}</div>
+      </details>`;
+  }
+
   function sessionIcon(session) {
     if (session.isDraft) return "+";
     if (session.isPhoneMain) return "微";
@@ -2942,7 +2979,7 @@ HTML = r"""<!doctype html>
     restoreAttachments(current);
     updateDeliverStatus();
     $("sessionTitle").textContent = current.label;
-    $("sessionMeta").textContent = `${current.key} | ${current.model} | sessionId=${current.sessionId}`;
+    setHeaderMeta(`${current.model} · 草稿`, `${current.key} | ${current.model} | sessionId=${current.sessionId}`);
     renderMessages({ forceBottom: true });
     loadSessions({ silent: true });
     $("message").focus();
@@ -3196,7 +3233,7 @@ HTML = r"""<!doctype html>
     $("searchCount").textContent = "0/0";
     if (!currentTask) {
       $("sessionTitle").textContent = "黑洞协作";
-      $("sessionMeta").textContent = "输入任务后会创建独立协作窗口，并为每个 agent 建立独立 session。";
+      setHeaderMeta("输入任务后会创建独立协作窗口。", "输入任务后会创建独立协作窗口，并为每个 agent 建立独立 session。");
       $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
       $("blackholeWorkshopSlot").innerHTML = "";
       $("messages").innerHTML = `
@@ -3208,7 +3245,10 @@ HTML = r"""<!doctype html>
       return;
     }
     $("sessionTitle").textContent = `黑洞协作 · ${currentTask.title}`;
-    $("sessionMeta").textContent = `${currentTask.id} | ${blackholeStatusText(currentTask.status)} | ${currentTask.path || ""}`;
+    setHeaderMeta(
+      `${blackholeStatusText(currentTask.status)} · ${esc(currentTask.id).slice(0, 8)} · ${currentTask.updatedAt ? new Date(currentTask.updatedAt).toLocaleString() : "-"}`,
+      `${currentTask.id} | ${blackholeStatusText(currentTask.status)} | ${currentTask.path || ""}`
+    );
     $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot show";
     $("blackholeWorkshopSlot").innerHTML = renderBlackholeWorkshop(currentTask);
     const messages = currentTask.messages || {};
@@ -3299,7 +3339,7 @@ HTML = r"""<!doctype html>
     currentMessages = [];
     lastMessagesSignature = "";
     $("sessionTitle").textContent = "请选择一个会话";
-    $("sessionMeta").textContent = "";
+    setHeaderMeta("");
     $("messages").innerHTML = '<div class="empty">会话已归档。可在“工具 → 已归档列表”中恢复或永久删除。</div>';
     await loadSessions({ silent: true });
     setSyncStatus("已归档会话。");
@@ -3380,7 +3420,7 @@ HTML = r"""<!doctype html>
     const sessions = archive.sessions || [];
     const tasks = archive.blackholeTasks || [];
     $("sessionTitle").textContent = "已归档列表";
-    $("sessionMeta").textContent = "默认只是归档；永久删除需要二次确认。";
+    setHeaderMeta("默认只是归档；永久删除需要二次确认。");
     setSyncStatus(`已归档：${sessions.length} 个会话，${tasks.length} 个黑洞任务。`);
     $("messages").innerHTML = `
       <div class="archiveList">
@@ -3407,7 +3447,7 @@ HTML = r"""<!doctype html>
 
   function renderSetupDoctor(report) {
     $("sessionTitle").textContent = "配置自检";
-    $("sessionMeta").textContent = `Setup Doctor · 当前版本 ${report.version || "-"} · ${report.needsSetup ? "建议确认本机初始化" : "本机初始化已记录"}`;
+    setHeaderMeta(`Setup Doctor · 当前版本 ${report.version || "-"} · ${report.needsSetup ? "建议确认本机初始化" : "本机初始化已记录"}`);
     setSyncStatus("配置自检：检查基础服务、OpenClaw、多 agent、Obsidian 和升级状态。");
     $("handover").className = "handover";
     $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
@@ -3465,7 +3505,7 @@ HTML = r"""<!doctype html>
 
   function renderUpgradeGuard(report) {
     $("sessionTitle").textContent = "升级护航";
-    $("sessionMeta").textContent = `Upgrade Guard · Studio ${report.version || "-"} · ${report.latestBackup ? "已有升级前备份" : "尚未备份"}`;
+    setHeaderMeta(`Upgrade Guard · Studio ${report.version || "-"} · ${report.latestBackup ? "已有升级前备份" : "尚未备份"}`);
     setSyncStatus("升级护航：升级前冻结现场，升级后对照插件、频道、agent 和日志状态。");
     $("handover").className = "handover";
     $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
@@ -3601,12 +3641,14 @@ HTML = r"""<!doctype html>
     const visibleChecks = health.checks.filter(c => c.level !== "ok");
     const box = $("health");
     box.className = `health ${health.level}`;
-    if (!visibleChecks.length) {
+    if (!visibleChecks.length || health.dismissed) {
       box.innerHTML = "";
+      box.className = "health ok";
       return;
     }
     const title = health.level === "error" ? "环境缺少必要配置" : "环境提示";
     box.innerHTML = `
+      ${health.dismissible ? `<button id="dismissHealth" class="healthClose" type="button" title="关闭此提示">×</button>` : ""}
       <div class="healthTitle">${esc(title)}</div>
       ${visibleChecks.map(c => `
         <div class="healthItem">
@@ -3617,6 +3659,18 @@ HTML = r"""<!doctype html>
         </div>
       `).join("")}
     `;
+    const close = $("dismissHealth");
+    if (close) {
+      close.onclick = async () => {
+        box.className = "health ok";
+        box.innerHTML = "";
+        await fetch("/api/dismiss-health", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+      };
+    }
   }
 
   async function loadAutoStatus() {
@@ -3635,7 +3689,7 @@ HTML = r"""<!doctype html>
     if (!current) return;
     if (current.isDraft) {
       $("sessionTitle").textContent = current.label;
-      $("sessionMeta").textContent = `${current.key} | ${current.model || "-"} | sessionId=${current.sessionId}`;
+      setHeaderMeta(`${current.model || "-"} · 草稿`, `${current.key} | ${current.model || "-"} | sessionId=${current.sessionId}`);
       currentMessages = [];
       lastMessagesSignature = "";
       renderMessages({ forceBottom: true });
@@ -3645,7 +3699,10 @@ HTML = r"""<!doctype html>
     if (isLoadingMessages) return;
     isLoadingMessages = true;
     $("sessionTitle").textContent = current.label;
-    $("sessionMeta").textContent = `${current.key} | ${current.model || "-"} | sessionId=${current.sessionId}`;
+    setHeaderMeta(
+      `${current.agentId || "-"} · ${current.chatType || "-"} · ${current.model || "-"}`,
+      `${current.key} | ${current.model || "-"} | sessionId=${current.sessionId}`
+    );
     if (!silent) setSyncStatus(reason || "事件推送：正在读取最新消息...");
     try {
       const messages = await fetch(`/api/messages?key=${encodeURIComponent(current.key)}`).then(r => r.json());
@@ -4298,6 +4355,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/open-tui-key",
             "/api/handover",
             "/api/auto-handover-now",
+            "/api/dismiss-health",
             "/api/setup-doctor/fix",
             "/api/upgrade-guard/backup",
             "/api/open-handover-dir",
@@ -4331,6 +4389,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auto-handover-now":
             self.send_json(run_auto_handover_once())
+            return
+        if self.path == "/api/dismiss-health":
+            self.send_json(dismiss_health_prompt())
             return
         if self.path == "/api/setup-doctor/fix":
             self.send_json(setup_doctor_fix())

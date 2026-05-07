@@ -97,6 +97,14 @@ Display names are UI labels only. Keep stable OpenClaw agent IDs underneath so r
 
 If your agents use OpenAI models, prefer the subscription-based authentication flow when available. Configure a fallback model such as DeepSeek so a temporary OpenAI model/auth issue does not stop every agent.
 
+## Setup Doctor
+
+After the first launch, or after upgrading the project, open `Tools -> 配置自检`.
+
+Setup Doctor checks local services, OpenClaw CLI/Gateway, session storage, multi-agent readiness, Obsidian handoff folders, and version state. Its safe fix action only creates missing support directories and records the current Studio version; it does not modify agents, models, auth profiles, API keys, or session history.
+
+More details: [docs/SETUP_DOCTOR.md](docs/SETUP_DOCTOR.md)
+
 ## Safety
 
 - This tool reads local OpenClaw sessions, optional Obsidian notes, and local attachment cache files.
@@ -121,7 +129,8 @@ If your agents use OpenAI models, prefer the subscription-based authentication f
 ├── AUTHORS.md
 ├── CONTRIBUTING.md
 └── docs/
-    └── OPEN_SOURCE_CHECKLIST.md
+    ├── OPEN_SOURCE_CHECKLIST.md
+    └── SETUP_DOCTOR.md
 ```
 
 ## Development

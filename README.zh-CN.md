@@ -97,6 +97,14 @@ python3 openclaw_session_viewer.py
 
 如果涉及 OpenAI 模型，建议优先使用订阅认证方式；如订阅模型不可用，应配置 DeepSeek 等备用模型，避免所有 agent 同时瘫痪。
 
+## 配置自检
+
+第一次启动或升级后，打开 `工具 -> 配置自检`。
+
+配置自检会检查基础服务、OpenClaw CLI/Gateway、会话存储、多 agent 准备情况、Obsidian 接力目录和当前版本状态。安全修复按钮只会创建缺失的支持目录，并记录当前 Studio 版本；不会修改 agent、模型、认证配置、API key 或会话历史。
+
+详细说明见：[docs/SETUP_DOCTOR.md](docs/SETUP_DOCTOR.md)
+
 ## 安全提醒
 
 - 本工具会读取本机 OpenClaw session、Obsidian 目录和附件缓存。
@@ -118,7 +126,8 @@ python3 openclaw_session_viewer.py
 ├── LICENSE
 ├── SECURITY.md
 └── docs/
-    └── OPEN_SOURCE_CHECKLIST.md
+    ├── OPEN_SOURCE_CHECKLIST.md
+    └── SETUP_DOCTOR.md
 ```
 
 ## 开发

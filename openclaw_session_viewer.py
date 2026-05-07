@@ -18,10 +18,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+STUDIO_VERSION = "0.1.1"
+TOOL_DIR = Path(__file__).resolve().parent
 HOST = os.environ.get("OPENCLAW_SESSION_VIEWER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("OPENCLAW_SESSION_VIEWER_PORT", "8766"))
 OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw")).expanduser()
 AGENTS_DIR = OPENCLAW_HOME / "agents"
+STUDIO_STATE_DIR = OPENCLAW_HOME / "session-viewer-state"
+SETUP_STATE_FILE = STUDIO_STATE_DIR / "setup.json"
 REMOTE_STATE_DIR = OPENCLAW_HOME / "session-viewer-remote"
 REMOTE_TOKEN_FILE = REMOTE_STATE_DIR / "access-token.txt"
 AUTH_COOKIE_NAME = "openclaw_session_viewer_token"
@@ -53,6 +57,7 @@ EXTRA_PATHS = [
     str(OPENCLAW_HOME / "bin"),
     str(OPENCLAW_HOME / "tools" / "node-v22.22.0" / "bin"),
     str(OPENCLAW_HOME / "tools" / "node-v22.22.0" / "lib" / "node_modules" / ".bin"),
+    str(Path.home() / "Library" / "pnpm" / "global" / "5" / "node_modules" / ".bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",
@@ -129,6 +134,262 @@ def openclaw_cli():
         return found
     fallback = OPENCLAW_HOME / "bin" / "openclaw"
     return str(fallback) if fallback.exists() else ""
+
+
+def level_worst(items):
+    order = {"ok": 0, "info": 0, "warn": 1, "error": 2}
+    worst = "ok"
+    for item in items:
+        if order.get(item.get("level"), 0) > order.get(worst, 0):
+            worst = item.get("level")
+    return worst
+
+
+def check_item(level, title, detail="", action="", fixable=False, key=""):
+    return {
+        "level": level,
+        "title": title,
+        "detail": detail,
+        "action": action,
+        "fixable": bool(fixable),
+        "key": key,
+    }
+
+
+def can_connect_tcp(host, port, timeout=0.7):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def command_script_files():
+    return sorted(TOOL_DIR.glob("*.command"))
+
+
+def openclaw_status_ok(status_text):
+    signals = (
+        "Connectivity probe: ok",
+        "Gateway online",
+        "reachable",
+        "LaunchAgent running",
+        "Runtime: running",
+        "Gateway: online",
+    )
+    return any(signal in status_text for signal in signals)
+
+
+def auth_profiles_for_agent(agent_id):
+    path = AGENTS_DIR / agent_id / "agent" / "auth-profiles.json"
+    data = read_json(path) or {}
+    return data.get("profiles") or {}
+
+
+def has_openai_api_key_profile(agent_id):
+    for profile in auth_profiles_for_agent(agent_id).values():
+        if not isinstance(profile, dict):
+            continue
+        provider = (profile.get("provider") or "").lower()
+        kind = (profile.get("type") or "").lower()
+        if provider == "openai" and kind == "api_key":
+            return True
+    return False
+
+
+def has_deepseek_profile(agent_id="main"):
+    for profile in auth_profiles_for_agent(agent_id).values():
+        if not isinstance(profile, dict):
+            continue
+        if (profile.get("provider") or "").lower() == "deepseek":
+            return True
+    return False
+
+
+def path_write_state(path):
+    path = Path(path)
+    if path.exists():
+        return "ok" if os.access(path, os.W_OK) else "error"
+    parent = path.parent
+    if parent.exists() and os.access(parent, os.W_OK):
+        return "missing-fixable"
+    return "missing"
+
+
+def setup_state():
+    return read_json(SETUP_STATE_FILE) or {}
+
+
+def setup_doctor_report():
+    state = setup_state()
+    sections = []
+    openclaw_bin = openclaw_cli()
+    sessions = session_stores()
+    session_count = sum(len(data) for _, _, data in sessions)
+    needs_setup = not state.get("setupCompleted") or state.get("lastSeenVersion") != STUDIO_VERSION
+
+    basic = [
+        check_item("ok", "Python 3 可用", sys.version.split()[0]),
+    ]
+    if openclaw_bin:
+        version = run([openclaw_bin, "--version"], timeout=8).strip()
+        basic.append(check_item("ok", "OpenClaw CLI 已安装", version or openclaw_bin))
+    else:
+        basic.append(check_item(
+            "error",
+            "缺少 OpenClaw CLI",
+            "没有在 PATH 中找到 openclaw 命令。",
+            "安装 OpenClaw 后，打开新终端确认 openclaw --version 能正常输出。",
+        ))
+    if (TOOL_DIR / ".git").exists():
+        remote = run(["git", "-C", str(TOOL_DIR), "remote", "get-url", "origin"], timeout=4).strip()
+        basic.append(check_item("ok", "项目目录是 Git 仓库", remote or str(TOOL_DIR)))
+    else:
+        basic.append(check_item(
+            "warn",
+            "项目目录不是 Git 仓库",
+            str(TOOL_DIR),
+            "如果想一键升级，建议用 git clone 安装；下载 zip 也能使用，但不能直接 git pull。",
+        ))
+    bad_scripts = [path.name for path in command_script_files() if not os.access(path, os.X_OK)]
+    if bad_scripts:
+        basic.append(check_item(
+            "warn",
+            "部分启动脚本不可执行",
+            "、".join(bad_scripts),
+            "在终端运行 chmod +x *.command，或重新下载发布包。",
+        ))
+    else:
+        basic.append(check_item("ok", "启动脚本权限正常", f"{len(command_script_files())} 个 .command 文件"))
+    if can_connect_tcp("127.0.0.1", PORT):
+        basic.append(check_item("ok", "小工具端口在线", f"127.0.0.1:{PORT}"))
+    else:
+        basic.append(check_item("warn", "小工具端口未检测到监听", f"127.0.0.1:{PORT}", "如果你正在看这个页面，可以忽略；否则请重新启动小工具。"))
+    if can_connect_tcp("127.0.0.1", 18789):
+        basic.append(check_item("ok", "OpenClaw Gateway 端口在线", "127.0.0.1:18789"))
+    else:
+        basic.append(check_item("warn", "OpenClaw Gateway 端口未在线", "127.0.0.1:18789", "如果发送失败，请运行 openclaw status 或启动 gateway。"))
+    sections.append({"id": "basic", "title": "基础服务", "items": basic, "level": level_worst(basic)})
+
+    config = []
+    if OPENCLAW_HOME.exists():
+        config.append(check_item("ok", "OpenClaw 数据目录存在", str(OPENCLAW_HOME)))
+    else:
+        config.append(check_item("error", "缺少 OpenClaw 数据目录", str(OPENCLAW_HOME), "先运行 openclaw setup 或完成一次 OpenClaw 配置。"))
+    if sessions:
+        config.append(check_item("ok", "已发现会话存储", f"{len(sessions)} 个 agent，{session_count} 个 session"))
+    else:
+        config.append(check_item("warn", "还没有发现 OpenClaw 会话", str(AGENTS_DIR), "先用 OpenClaw TUI、网页或频道端发起一次对话。"))
+    if openclaw_bin:
+        status_text = run([openclaw_bin, "status"], timeout=8)
+        if openclaw_status_ok(status_text) or can_connect_tcp("127.0.0.1", 18789):
+            config.append(check_item("ok", "Gateway 状态可用", "openclaw status 或端口探测通过。"))
+        else:
+            config.append(check_item("warn", "Gateway 状态需要确认", "没有识别到明确在线状态。", "运行 openclaw status 查看详情；必要时重启 gateway。"))
+    if sys.platform == "darwin" and shutil.which("osascript"):
+        config.append(check_item("ok", "TUI 打开能力可用", "macOS Terminal + osascript"))
+    else:
+        config.append(check_item("warn", "TUI 自动打开能力受限", sys.platform, "非 macOS 环境请手动复制 session key。"))
+    if has_deepseek_profile("main"):
+        config.append(check_item("ok", "DeepSeek 兜底可用", "main agent 存在 DeepSeek auth profile。"))
+    else:
+        config.append(check_item("warn", "DeepSeek 兜底未确认", "main agent 未发现 DeepSeek auth profile。", "建议至少给 main 配置 DeepSeek，OpenAI 订阅不可用时可兜底。"))
+    sections.append({"id": "openclaw", "title": "OpenClaw 配置", "items": config, "level": level_worst(config)})
+
+    multi = []
+    for agent in BLACKHOLE_AGENT_DEFS:
+        agent_id = agent["id"]
+        agent_dir = AGENTS_DIR / agent_id
+        sessions_file = agent_dir / "sessions" / "sessions.json"
+        if agent_dir.exists():
+            detail = "会话存储已存在" if sessions_file.exists() else "agent 目录存在，但 sessions.json 尚未生成"
+            multi.append(check_item("ok" if sessions_file.exists() else "warn", f"{agent['label']} `{agent_id}`", detail, "首次运行该 agent 后会生成 session 记录。" if not sessions_file.exists() else ""))
+        else:
+            multi.append(check_item("warn", f"缺少 {agent['label']} `{agent_id}`", str(agent_dir), f"需要黑洞协作完整体验时，请先在 OpenClaw 中创建 {agent_id}。"))
+        if has_openai_api_key_profile(agent_id):
+            multi.append(check_item("error", f"{agent['label']} 检测到 OpenAI API key profile", agent_id, "本项目约定 OpenAI 模型必须走订阅方式；请移除该 agent 的 OpenAI API key profile。"))
+    if BLACKHOLE_STATE_DIR.exists():
+        multi.append(check_item("ok", "黑洞任务索引目录存在", str(BLACKHOLE_STATE_DIR)))
+    else:
+        multi.append(check_item("warn", "缺少黑洞任务索引目录", str(BLACKHOLE_STATE_DIR), "可以由配置自检创建。", True, "blackhole-state"))
+    sections.append({"id": "multi-agent", "title": "多 Agent / 黑洞协作", "items": multi, "level": level_worst(multi)})
+
+    obsidian = []
+    obsidian_paths = [
+        ("OpenClaw 笔记目录", OBSIDIAN_OPENCLAW_DIR, "obsidian-openclaw"),
+        ("接力摘要目录", HANDOVER_DIR, "handover"),
+        ("自动接力目录", AUTO_HANDOVER_DIR, "auto-handover"),
+        ("黑洞共享空间", BLACKHOLE_SHARED_DIR, "blackhole-shared"),
+        ("黑洞任务目录", BLACKHOLE_TASKS_DIR, "blackhole-tasks"),
+        ("黑洞归档目录", BLACKHOLE_ARCHIVE_DIR, "blackhole-archive"),
+    ]
+    for title, path, key in obsidian_paths:
+        state_text = path_write_state(path)
+        if state_text == "ok":
+            obsidian.append(check_item("ok", title, str(path)))
+        elif state_text == "missing-fixable":
+            obsidian.append(check_item("warn", f"缺少{title}", str(path), "可以由配置自检创建。", True, key))
+        else:
+            obsidian.append(check_item("warn", f"缺少{title}", str(path), "请先确认 Obsidian Vault 路径，或设置 OPENCLAW_SESSION_VIEWER_OBSIDIAN_DIR。"))
+    sections.append({"id": "obsidian", "title": "Obsidian / 接力系统", "items": obsidian, "level": level_worst(obsidian)})
+
+    state_items = []
+    if needs_setup:
+        reason = "首次使用" if not state.get("setupCompleted") else f"已从 {state.get('lastSeenVersion')} 升级到 {STUDIO_VERSION}"
+        state_items.append(check_item("warn", "建议运行配置自检确认", reason, "点击“创建缺失目录并记录当前版本”完成本机初始化。", True, "state"))
+    else:
+        state_items.append(check_item("ok", "本机初始化记录正常", f"lastSeenVersion={state.get('lastSeenVersion')}"))
+    sections.append({"id": "state", "title": "首次启动 / 升级状态", "items": state_items, "level": level_worst(state_items)})
+
+    worst = level_worst([{"level": section["level"]} for section in sections])
+    return {
+        "ok": worst != "error",
+        "level": worst,
+        "version": STUDIO_VERSION,
+        "needsSetup": needs_setup,
+        "sections": sections,
+        "paths": {
+            "toolDir": str(TOOL_DIR),
+            "openclawHome": str(OPENCLAW_HOME),
+            "agentsDir": str(AGENTS_DIR),
+            "obsidianDir": str(OBSIDIAN_OPENCLAW_DIR),
+            "blackholeDir": str(BLACKHOLE_DIR),
+            "setupStateFile": str(SETUP_STATE_FILE),
+        },
+    }
+
+
+def setup_doctor_fix():
+    created = []
+    for path in [
+        STUDIO_STATE_DIR,
+        ATTACHMENTS_DIR,
+        ARCHIVE_STATE_DIR,
+        BLACKHOLE_STATE_DIR,
+        OBSIDIAN_OPENCLAW_DIR,
+        HANDOVER_DIR,
+        AUTO_HANDOVER_DIR,
+        BLACKHOLE_DIR,
+        BLACKHOLE_SHARED_DIR,
+        BLACKHOLE_TASKS_DIR,
+        BLACKHOLE_ARCHIVE_DIR,
+    ]:
+        before = path.exists()
+        path.mkdir(parents=True, exist_ok=True)
+        if not before:
+            created.append(str(path))
+    state = setup_state()
+    state.update({
+        "version": 1,
+        "setupCompleted": True,
+        "lastSeenVersion": STUDIO_VERSION,
+        "updatedAt": int(time.time() * 1000),
+        "toolDir": str(TOOL_DIR),
+        "openclawHome": str(OPENCLAW_HOME),
+        "obsidianDir": str(OBSIDIAN_OPENCLAW_DIR),
+    })
+    write_json(SETUP_STATE_FILE, state)
+    return {"ok": True, "created": created, "stateFile": str(SETUP_STATE_FILE), "report": setup_doctor_report()}
 
 
 def get_access_token():
@@ -266,6 +527,18 @@ def app_health():
     openclaw_bin = openclaw_cli()
     sessions = session_stores()
     session_count = sum(len(data) for _, _, data in sessions)
+    state = setup_state()
+
+    if not state.get("setupCompleted") or state.get("lastSeenVersion") != STUDIO_VERSION:
+        detail = "首次使用或升级后建议运行一次完整检查。"
+        if state.get("lastSeenVersion"):
+            detail = f"已记录版本 {state.get('lastSeenVersion')}，当前版本 {STUDIO_VERSION}。"
+        checks.append({
+            "level": "warn",
+            "title": "建议运行配置自检",
+            "detail": detail,
+            "action": "打开“工具 → 配置自检”，检查基础服务、多 agent、Obsidian 和共享工作空间。",
+        })
 
     checks.append({
         "level": "ok",
@@ -337,16 +610,11 @@ def app_health():
 
     if openclaw_bin:
         status_text = run([openclaw_bin, "status"], timeout=8)
-        if (
-            "Connectivity probe: ok" in status_text
-            or "Gateway online" in status_text
-            or ("Gateway" in status_text and "reachable" in status_text)
-            or ("Gateway service" in status_text and "running" in status_text)
-        ):
+        if openclaw_status_ok(status_text) or can_connect_tcp("127.0.0.1", 18789):
             checks.append({
                 "level": "ok",
                 "title": "OpenClaw Gateway 看起来在线",
-                "detail": "openclaw status 检查通过。",
+                "detail": "openclaw status 或端口探测检查通过。",
                 "action": "",
             })
         else:
@@ -367,7 +635,7 @@ def app_health():
         "level": worst,
         "checks": checks,
         "paths": {
-            "toolDir": os.getcwd(),
+            "toolDir": str(TOOL_DIR),
             "openclawHome": str(OPENCLAW_HOME),
             "agentsDir": str(AGENTS_DIR),
         },
@@ -1926,6 +2194,28 @@ HTML = r"""<!doctype html>
     .archiveItem { border: 1px solid var(--hairline); border-radius: 12px; background: var(--canvas); padding: 12px; }
     .archiveItemHeader { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
     .archiveActions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .doctorPage { display: grid; gap: 12px; }
+    .doctorHero { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface-soft); padding: 14px; }
+    .doctorHero h2 { margin: 0 0 6px; font-size: 18px; line-height: 1.3; }
+    .doctorHero p { margin: 0; color: var(--slate); line-height: 1.5; }
+    .doctorActions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .doctorSection { border: 1px solid var(--hairline); border-radius: 12px; background: var(--canvas); overflow: hidden; }
+    .doctorSectionHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--hairline); background: var(--surface-soft); }
+    .doctorSectionTitle { font-weight: 700; }
+    .doctorPill { border-radius: 999px; padding: 3px 8px; font-size: 11px; font-weight: 700; border: 1px solid var(--hairline); background: var(--cream); color: var(--charcoal); }
+    .doctorPill.ok { background: var(--mint); color: #116329; border-color: #bfe7ca; }
+    .doctorPill.warn { background: var(--peach); color: #793400; border-color: #ffd1ad; }
+    .doctorPill.error { background: #fff0f0; color: var(--error); border-color: #f4b8b8; }
+    .doctorItem { padding: 10px 12px; border-top: 1px solid var(--hairline-soft); display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+    .doctorItem:first-child { border-top: 0; }
+    .doctorMark { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; background: var(--cream); color: var(--charcoal); }
+    .doctorMark.ok { background: var(--mint); color: #116329; }
+    .doctorMark.warn { background: var(--peach); color: #793400; }
+    .doctorMark.error { background: #fff0f0; color: var(--error); }
+    .doctorItemTitle { font-weight: 700; line-height: 1.4; }
+    .doctorDetail { color: var(--slate); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .doctorAction { color: var(--steel); font-size: 12px; line-height: 1.45; margin-top: 3px; }
+    .doctorPaths { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--slate); background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: 10px; padding: 10px; overflow-wrap: anywhere; }
     form { border-top: 1px solid var(--hairline); padding: 10px 14px calc(16px + env(safe-area-inset-bottom)); background: var(--canvas); min-width: 0; max-width: 100%; overflow: hidden; }
     .composer { position: relative; border: 1px solid var(--hairline-strong); border-radius: 16px; background: var(--canvas); overflow: hidden; box-shadow: 0 4px 18px rgba(10,21,48,.08); min-width: 0; max-width: 100%; }
     textarea { width: 100%; box-sizing: border-box; min-height: 56px; max-height: 220px; resize: none; border: 0; padding: 12px 12px 8px 44px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; outline: none; }
@@ -2041,6 +2331,7 @@ HTML = r"""<!doctype html>
               <button id="reloadMessages" class="secondary">重载消息</button>
               <button id="makeHandover" class="secondary">生成接力摘要</button>
               <button id="openHandoverDir" class="secondary">接力文件夹</button>
+              <button id="showSetupDoctor" class="secondary">配置自检</button>
               <button id="archiveCurrentSession" class="secondary">归档会话</button>
               <button id="archiveCurrentTask" class="secondary">归档任务</button>
               <button id="showArchiveList" class="secondary">已归档列表</button>
@@ -2821,6 +3112,72 @@ HTML = r"""<!doctype html>
       </div>`;
   }
 
+  function doctorLevelText(level) {
+    return { ok: "正常", warn: "提醒", error: "错误" }[level] || level || "-";
+  }
+
+  function doctorMark(level) {
+    return { ok: "✓", warn: "!", error: "×" }[level] || "·";
+  }
+
+  function renderSetupDoctor(report) {
+    $("sessionTitle").textContent = "配置自检";
+    $("sessionMeta").textContent = `Setup Doctor · 当前版本 ${report.version || "-"} · ${report.needsSetup ? "建议确认本机初始化" : "本机初始化已记录"}`;
+    setSyncStatus("配置自检：检查基础服务、OpenClaw、多 agent、Obsidian 和升级状态。");
+    $("handover").className = "handover";
+    $("blackholeWorkshopSlot").className = "blackholeWorkshopSlot";
+    $("blackholeWorkshopSlot").innerHTML = "";
+    const pathText = Object.entries(report.paths || {}).map(([key, value]) => `${key}: ${value}`).join("\n");
+    $("messages").innerHTML = `
+      <div class="doctorPage">
+        <div class="doctorHero">
+          <h2>Setup Doctor / 配置自检</h2>
+          <p>这里用于第一次安装、迁移到新电脑、升级后检查环境。默认只读；点击修复按钮只会创建缺失目录并记录当前版本，不会改 OpenClaw agent、模型或密钥配置。</p>
+          <div class="doctorActions">
+            <button id="refreshSetupDoctor" type="button">重新检查</button>
+            <button id="fixSetupDoctor" class="secondary" type="button">创建缺失目录并记录当前版本</button>
+          </div>
+        </div>
+        ${(report.sections || []).map(section => `
+          <div class="doctorSection">
+            <div class="doctorSectionHeader">
+              <div class="doctorSectionTitle">${esc(section.title)}</div>
+              <span class="doctorPill ${esc(section.level)}">${esc(doctorLevelText(section.level))}</span>
+            </div>
+            ${(section.items || []).map(item => `
+              <div class="doctorItem">
+                <span class="doctorMark ${esc(item.level)}">${esc(doctorMark(item.level))}</span>
+                <div>
+                  <div class="doctorItemTitle">${esc(item.title)}</div>
+                  ${item.detail ? `<div class="doctorDetail">${esc(item.detail)}</div>` : ""}
+                  ${item.action ? `<div class="doctorAction">${esc(item.action)}</div>` : ""}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `).join("")}
+        <div class="doctorPaths">${esc(pathText)}</div>
+      </div>`;
+  }
+
+  async function showSetupDoctor() {
+    const report = await fetch("/api/setup-doctor").then(r => r.json());
+    renderSetupDoctor(report);
+  }
+
+  async function fixSetupDoctor() {
+    if (!confirm("创建缺失目录并记录当前版本？\n\n这个操作不会改 OpenClaw agent、模型或密钥配置。")) return;
+    const result = await fetch("/api/setup-doctor/fix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then(r => r.json());
+    if (!result.ok) return alert(result.error || "修复失败");
+    renderSetupDoctor(result.report);
+    setSyncStatus(`配置自检：已创建 ${result.created.length} 个目录，并记录当前版本。`);
+    await loadHealth();
+  }
+
   async function restoreArchive(kind, archiveId) {
     const path = kind === "blackhole" ? "/api/blackhole/restore" : "/api/session/restore";
     const result = await fetch(path, {
@@ -3131,6 +3488,14 @@ HTML = r"""<!doctype html>
     }
   });
   $("messages").onclick = async (event) => {
+    if (event.target.closest("#refreshSetupDoctor")) {
+      await showSetupDoctor();
+      return;
+    }
+    if (event.target.closest("#fixSetupDoctor")) {
+      await fixSetupDoctor();
+      return;
+    }
     const restore = event.target.closest("[data-archive-restore]");
     if (restore) {
       await restoreArchive(restore.dataset.archiveKind, restore.dataset.archiveRestore);
@@ -3207,6 +3572,7 @@ HTML = r"""<!doctype html>
   $("archiveCurrentTask").onclick = archiveCurrentBlackholeTask;
   $("cancelBlackhole").onclick = cancelCurrentBlackholeTask;
   $("showArchiveList").onclick = showArchiveList;
+  $("showSetupDoctor").onclick = showSetupDoctor;
   $("runBlackhole").onclick = async () => {
     if (!currentTask) return alert("先创建或选择一个黑洞协作任务");
     const result = await fetch("/api/blackhole/run", {
@@ -3485,6 +3851,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_auth():
                 return
             self.send_json(app_health())
+        elif parsed.path == "/api/setup-doctor":
+            if not self.require_auth():
+                return
+            self.send_json(setup_doctor_report())
         elif parsed.path == "/api/auto-handover":
             if not self.require_auth():
                 return
@@ -3555,6 +3925,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/open-tui-key",
             "/api/handover",
             "/api/auto-handover-now",
+            "/api/setup-doctor/fix",
             "/api/open-handover-dir",
             "/api/open-path",
             "/api/session/archive",
@@ -3586,6 +3957,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auto-handover-now":
             self.send_json(run_auto_handover_once())
+            return
+        if self.path == "/api/setup-doctor/fix":
+            self.send_json(setup_doctor_fix())
             return
         if self.path == "/api/open-path":
             target = Path(data.get("path") or "")
